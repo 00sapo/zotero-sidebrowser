@@ -146,3 +146,15 @@ found, and which file inputs the page accepts.
   has already read and cleared the message box. Use the plain capture phase.
 - In the actor, use `this._log`, which forwards to the parent. `Zotero` and `dump`
   give no output there.
+
+## Many items selected
+
+- With several items selected the item pane `view-type` is `batch-edit-prompt`.
+  With none it is `message`. The sidenav then shows only the default panes, so a
+  registered section has no icon.
+- The plugin adds its own button next to the section buttons, outside the button
+  group that Zotero reorders, and one extra page to the item pane deck.
+- Zotero selects the deck page itself on a view change. A `MutationObserver` on
+  the `view-type` attribute puts the plugin page back in front.
+- The sidenav empties itself on reconnect, so another observer adds the button
+  again.
