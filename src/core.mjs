@@ -307,10 +307,20 @@ export async function onMainWindowLoad(win) {
   }
   addViewMenuItem(win);
   watchItemsView(win);
+  try {
+    loadModule("src/multi.mjs").install(win, pluginRootURI);
+  } catch (e) {
+    logError(e);
+  }
   await refresh();
 }
 
 export async function onMainWindowUnload(win) {
+  try {
+    loadModule("src/multi.mjs").remove(win);
+  } catch (e) {
+    debug(`${e}`);
+  }
   try {
     win?.document.getElementById(MENU_ITEM_ID)?.remove();
   } catch (e) {
@@ -320,6 +330,11 @@ export async function onMainWindowUnload(win) {
 
 export async function shutdown() {
   removeViewMenuItems();
+  try {
+    loadModule("src/multi.mjs").removeAll();
+  } catch (e) {
+    debug(`${e}`);
+  }
   if (notifierID !== null) {
     try {
       Zotero.Notifier.unregisterObserver(notifierID);
