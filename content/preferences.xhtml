@@ -2,25 +2,27 @@
   Preferences pane for Side Browser.
 
   Zotero loads this file as an XHTML fragment inside the preferences window, so
-  it must not contain <html>, <head>, or <body> tags. The script next to it wires
-  the controls to plugin preferences.
+  it must not contain <html>, <head>, or <body> tags.
 -->
 <vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       xmlns:html="http://www.w3.org/1999/xhtml">
   <html:style>
     .sb-prefs-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-    .sb-prefs-row > label { min-width: 190px; }
+    .sb-prefs-row > label { min-width: 210px; }
     .sb-prefs-row input[type="text"] { flex: 1 1 auto; }
     .sb-prefs-hint { font-size: 11px; opacity: 0.7; margin: 2px 0 10px 0; }
-    .sb-prefs-section { font-weight: 600; margin-top: 14px; }
   </html:style>
 
   <groupbox>
-    <label><html:h2>Side Browser</html:h2></label>
+    <label><html:h2>AI Sidebar</html:h2></label>
 
     <html:div class="sb-prefs-row">
-      <label for="sb-enabled">Enable the sidebar</label>
-      <checkbox id="sb-enabled" preference="extensions.zotero.sidebrowser.enabled"/>
+      <label for="sb-open">Show the pane</label>
+      <checkbox id="sb-open" preference="extensions.zotero.sidebrowser.open"/>
+    </html:div>
+    <html:div class="sb-prefs-hint">
+      The pane lives in Zotero's right column with the other item pane sections.
+      Use the icon in the strip at the far right to open it.
     </html:div>
 
     <html:div class="sb-prefs-row">
@@ -44,14 +46,21 @@
     </html:div>
 
     <html:div class="sb-prefs-row">
-      <label for="sb-include-pdf">Attach the PDF by default</label>
-      <checkbox id="sb-include-pdf" preference="extensions.zotero.sidebrowser.includePDF"/>
+      <label for="sb-auto-context">Add the paper context to every message</label>
+      <checkbox id="sb-auto-context" preference="extensions.zotero.sidebrowser.autoContext"/>
+    </html:div>
+    <html:div class="sb-prefs-hint">
+      When a message leaves the chat page, the title, authors, and abstract of the
+      current paper go in front of it. Turn this off to send the message alone.
     </html:div>
 
     <html:div class="sb-prefs-row">
-      <label for="sb-width">Sidebar width in pixels</label>
-      <html:input id="sb-width" type="number" min="300" max="1200"
-                  preference="extensions.zotero.sidebrowser.width"/>
+      <label for="sb-show-composer">Show the message box in the pane</label>
+      <checkbox id="sb-show-composer" preference="extensions.zotero.sidebrowser.showComposer"/>
+    </html:div>
+    <html:div class="sb-prefs-hint">
+      The box is hidden by default, because the chat page already has one. Show it
+      to read or edit the composed text before it goes.
     </html:div>
 
     <html:div class="sb-prefs-row">
@@ -60,7 +69,7 @@
                   preference="extensions.zotero.sidebrowser.maxItems"/>
     </html:div>
     <html:div class="sb-prefs-hint">
-      Caps how many listed papers are sent as context, to keep the message small.
+      Caps how many listed papers are used as context, to keep the message small.
     </html:div>
 
     <html:div class="sb-prefs-row">

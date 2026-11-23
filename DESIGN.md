@@ -74,16 +74,17 @@ installed Zotero 10.0.8 (Gecko 140) or against a probe plugin run under Xvfb.
 
 ## Layout
 
-- Zotero's custom elements reset their contents when they are disconnected and
-  reconnected. Never move the tab stack or its children to make room.
-- `#appcontent` is a vertical column that holds `#zotero-pane-stack`. Adding a
-  class that turns it into a row gives the panel its own column.
-- Zotero reserves about 930 pixels for the collections pane, the item list, and
-  the item pane. The panel must be capped so it cannot push them out of the
-  window, and every step of that chain needs `min-width: 0` to be allowed to
-  shrink.
-- Zotero's own `load` event does not fire reliably for remote content in a chrome
-  window. `browsingContext.webProgress` with an `nsIWebProgressListener` does.
+- `Zotero.ItemPaneManager.registerSection` adds a section to the right column and
+  an icon to the strip. The section body is a plain `div` that the plugin fills.
+- Zotero namespaces the pane ID with the plugin ID, so the registered ID differs
+  from the one passed in. Use the value that `registerSection` returns.
+- Moving a `<browser>` to another parent creates a new browsing context and the
+  page returns to `about:blank`. Tested with a sibling, a nested holder, and an
+  item pane section. A pane that Zotero rebuilds therefore needs a new browser.
+- The section header text and the strip tooltip come from a Fluent file named
+  `locale/<lang>/<name>-mainWindow.ftl`. If the locale did not load, the header is
+  empty, so the plugin writes the text by hand after a short delay.
+- Modules have no `setInterval`. Take timers from the window.
 
 ## Menus and preferences
 
@@ -114,7 +115,9 @@ installed Zotero 10.0.8 (Gecko 140) or against a probe plugin run under Xvfb.
 
 ## Decisions from the user
 
-- Custom right sidebar, not the native item pane.
+- The pane is an item pane section, like Zotero Skimming. No custom column.
+- The context is added when the message is sent from the page. The PDF is attached
+  by a button, not during the send.
 - Per-site selectors in the page, driven by a window actor.
 - The real PDF file is attached, not extracted text.
 - Default providers: ChatGPT, Claude, DeepSeek, Mistral, plus a custom URL.
@@ -135,3 +138,11 @@ then checks 32 things, including:
 
 The same run also reports, per provider, the final URL, whether a composer was
 found, and which file inputs the page accepts.
+
+## Send intercept
+
+- The actor listens for `click` and `keydown` in the capture phase of the page.
+  A listener in the system group runs after the page's own handlers, so the site
+  has already read and cleared the message box. Use the plain capture phase.
+- In the actor, use `this._log`, which forwards to the parent. `Zotero` and `dump`
+  give no output there.

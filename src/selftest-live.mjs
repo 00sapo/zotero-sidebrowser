@@ -1,49 +1,63 @@
 /*
  * Live provider check used by the self test.
  *
- * Visits each built-in AI service in the sidebar and records what the actor can
- * see: the final URL, whether a composer exists, and which file inputs the page
+ * Visits each built-in AI service in the pane and records what the actor sees:
+ * the final address, whether a composer exists, and which file inputs the page
  * offers. This is what tells us whether the per-site selectors still work.
  */
 
-const WAIT_FOR_PAGE_MS = 15000;
+const WAIT_FOR_PAGE_MS = 20000;
 
-export async function testLiveProviders(record, sidebar) {
-  let step = (m) => Zotero.debug(`[Side Browser] liveTest: ${m}`);
+export async function testLiveProviders(record, api) {
+  let section = Zotero.SideBrowser.loadModule("src/section.mjs");
   let results = [];
+  let pane = api.pane;
 
-  for (let provider of sidebar.providers.filter((p) => !p.custom)) {
-    step(`visiting ${provider.id}`);
-    sidebar._selectProvider(provider.id, true);
-    await waitForPage(sidebar, provider.url);
+  for (let provider of section.getProviders().filter((p) => !p.custom)) {
+    pane.provider = provider;
+    pane.providerID = provider.id;
+    api.navigate(provider.url);
+    await waitForPage(pane, provider.url);
     await Zotero.Promise.delay(2000);
 
     let info = null;
     try {
-      let actor = await sidebar._waitForActor();
-      if (actor) {
-        await sidebar._applyAdapter();
-        info = await actor.sendQuery("prepare", {});
-      }
+      let actor = actorOf(pane);
+      info = actor ? await actor.sendQuery("prepare", {}) : null;
     } catch (e) {
       info = { error: String(e) };
     }
 
     let entry = {
       provider: provider.id,
-      url: sidebar._currentURL(),
+      url: urlOf(pane),
       composer: !!info?.hasComposer,
       fileInputs: info?.fileInputs || [],
     };
     results.push(entry);
-    record(`live ${provider.id}`, true, { value: entry });
+    record(`live ${provider.id}`, !!entry.url, { value: entry });
   }
 
-  step("done");
   return results;
 }
 
-async function waitForPage(sidebar, wanted) {
+function actorOf(pane) {
+  try {
+    return pane.browser.browsingContext?.currentWindowGlobal?.getActor("SideBrowser") || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function urlOf(pane) {
+  try {
+    return pane.browser.currentURI?.spec || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function waitForPage(pane, wanted) {
   let host = "";
   try {
     host = new URL(wanted).hostname;
@@ -52,8 +66,8 @@ async function waitForPage(sidebar, wanted) {
   }
   for (let i = 0; i < WAIT_FOR_PAGE_MS / 250; i++) {
     await Zotero.Promise.delay(250);
-    let current = sidebar._currentURL();
-    if (current && host && current.includes(host) && sidebar._pageLoaded) {
+    let current = urlOf(pane);
+    if (current && host && current.includes(host)) {
       return true;
     }
   }

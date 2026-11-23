@@ -1,10 +1,10 @@
 /*
  * Context building.
  *
- * The sidebar can send an AI assistant three kinds of material:
+ * The pane can send an AI assistant three kinds of material:
  *   1. Metadata of one paper, or of many papers.
- *   2. The PDF file of one or more papers, attached to the message.
- *   3. A text selection from an open PDF, with the user's own question.
+ *   2. The PDF file of one or more papers, attached through the page itself.
+ *   3. A text selection from an open PDF.
  *
  * Everything here returns plain data. Nothing touches the DOM, so the code is
  * easy to test from the console with `Zotero.SideBrowser.context`.
@@ -114,8 +114,7 @@ export function describeItems(items, { heading } = {}) {
 }
 
 /**
- * A compact one-line bibliography entry for each item, used when the user wants
- * a full list without abstract-level detail.
+ * A compact one-line bibliography entry for each item.
  *
  * @param {Zotero.Item[]} items
  * @returns {string}
@@ -138,7 +137,7 @@ export function listTitles(items) {
  *
  * A regular item contributes the best available PDF attachment. An attachment
  * item contributes itself when it is a PDF. Items without a local file are
- * returned in `skipped` so the composer can explain why a PDF was not attached.
+ * returned in `skipped` so the pane can explain why a PDF was not attached.
  *
  * @param {Zotero.Item[]} items
  * @returns {Promise<{files: {path: string, name: string, itemID: number}[], skipped: object[]}>}
@@ -158,8 +157,7 @@ export async function collectPDFs(items) {
       } catch (e) {
         attachment = null;
       }
-      // getBestAttachment can return a non-PDF (for example an EPUB or a
-      // snapshot). Only a PDF is useful here.
+      // getBestAttachment can return a non-PDF, such as an EPUB or a snapshot.
       if (attachment && !attachment.isPDFAttachment()) {
         attachment = null;
       }
@@ -266,27 +264,4 @@ export function dedupe(items) {
     out.push(item);
   }
   return out;
-}
-
-/**
- * Turn a selection of items into the list the sidebar should show. Reader tabs
- * report the open PDF, not the paper list, so this keeps the caller honest.
- *
- * @param {object} params
- * @param {Zotero.Item[]} params.selected - Highlighted items in the list.
- * @param {Zotero.Item[]} params.listed - Every item shown in the list.
- * @param {Zotero.Item|null} params.readerItem - Item of the open reader tab.
- * @returns {{mode: string, items: Zotero.Item[]}}
- */
-export function resolveScope({ selected = [], listed = [], readerItem = null }) {
-  if (readerItem) {
-    return { mode: "reader", items: [readerItem] };
-  }
-  if (selected.length) {
-    return { mode: "selection", items: selected };
-  }
-  if (listed.length) {
-    return { mode: "list", items: listed };
-  }
-  return { mode: "none", items: [] };
 }

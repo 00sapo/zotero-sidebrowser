@@ -1,16 +1,22 @@
 /*
  * Reader checks used by the self test.
  *
- * Opens the sample paper in the reader, selects text, and verifies that the
- * sidebar receives a usable selection payload.
+ * Opens the sample paper in the reader, selects text there, and verifies that
+ * the selection reaches the pane and the composed context.
  */
 
-export async function testReaderFlow(record, sidebar) {
+export async function testReaderFlow(record, section) {
   let step = (m) => Zotero.debug(`[Side Browser] readerTest: ${m}`);
 
+  let api = section.activePane();
+  if (!api) {
+    record("reader: pane available", false);
+    return;
+  }
+  let pane = api.pane;
+
   step("opening reader");
-  let win = Zotero.getMainWindow();
-  let item = sidebar.scope.items[0];
+  let item = pane.scope.items[0];
   let attachment = item ? await item.getBestAttachment() : null;
   if (!attachment) {
     record("reader attachment", false);
@@ -27,49 +33,53 @@ export async function testReaderFlow(record, sidebar) {
   }
   await reader._initPromise;
   record("reader opened", true, { value: reader.type });
-
   await Zotero.Promise.delay(2500);
 
-  // The reader runs in its own frame; select all text there.
-  let frameWin = reader._iframeWindow;
-  let selected = "";
-  try {
-    let inner = frameWin?.wrappedJSObject;
-    let iframe = inner?.document?.querySelector("iframe");
-    let pdfDoc = iframe?.contentDocument;
-    if (pdfDoc?.body) {
-      let range = pdfDoc.createRange();
-      range.selectNodeContents(pdfDoc.body);
-      let selection = iframe.contentWindow.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      selected = selection.toString();
-    }
-  } catch (e) {
-    step(`selection failed: ${e}`);
-  }
+  let selected = selectAllInReader(reader);
   record("reader text selected", selected.length > 0, { value: selected.slice(0, 60) });
 
-  // Push a synthetic selection through the same path a real popup click uses.
+  // Push a selection through the same path a real popup click uses.
   let annotation = {
     text: selected || "Synthetic selection for the self test.",
     pageLabel: "1",
     pageIndex: 0,
   };
-  sidebar._useSelection(annotation, reader);
-  await Zotero.Promise.delay(300);
+  section.useSelection(annotation, reader, Zotero.getMainWindow());
+  await Zotero.Promise.delay(600);
 
-  record("selection stored", sidebar.selection?.text?.length > 0, {
-    value: sidebar.selection?.text?.slice(0, 40),
+  record("selection stored", pane.selection?.text?.length > 0, {
+    value: pane.selection?.text?.slice(0, 40),
   });
-  record("pdf text box shown", !sidebar.checkboxes.includePDFText.closest("label").hidden);
+  let label = pane.root.querySelector('[data-option="pdfText"]');
+  record("selection option shown", !!label && !label.hidden);
 
-  // Compose with the selection and check the prompt carries it.
-  sidebar.checkboxes.includePDFText.checked = true;
-  sidebar._userTouched.includePDFText = true;
-  let composed = sidebar._compose();
+  await api.refreshScope();
+  let composed = api.compose();
   record("selection in prompt", composed.text.includes(annotation.text.slice(0, 20)), {
     value: { chars: composed.text.length },
   });
+
   step("done");
+}
+
+/** Select every word in the reader's PDF frame. */
+function selectAllInReader(reader) {
+  try {
+    let frameWin = reader._iframeWindow;
+    let inner = frameWin?.wrappedJSObject;
+    let iframe = inner?.document?.querySelector("iframe");
+    let pdfDoc = iframe?.contentDocument;
+    if (!pdfDoc?.body) {
+      return "";
+    }
+    let range = pdfDoc.createRange();
+    range.selectNodeContents(pdfDoc.body);
+    let selection = iframe.contentWindow.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection.toString();
+  } catch (e) {
+    Zotero.debug(`[Side Browser] Could not select in the reader: ${e}`);
+    return "";
+  }
 }

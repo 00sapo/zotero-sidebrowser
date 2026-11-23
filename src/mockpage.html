@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Side Browser mock</title>
+<style>
+  body { font: 13px system-ui, sans-serif; margin: 12px; }
+  #composer { width: 100%; height: 70px; box-sizing: border-box; }
+  #files { display: none; }
+  #log { white-space: pre-wrap; font-family: monospace; font-size: 11px; }
+</style>
+</head>
+<body>
+<h1>Mock chat</h1>
+<textarea id="composer" placeholder="Type a message"></textarea>
+<input id="files" type="file" accept="application/pdf" multiple hidden/>
+<button id="send" type="button">Send</button>
+<div id="log">idle</div>
+
+<script>
+/*
+ * A minimal chat page for the self test. It records what arrived, so the test
+ * can prove that a message, its context, and a PDF really reached the page.
+ */
+(function () {
+  var received = [];
+  window.__received = received;
+  window.__context = "";
+
+  var composer = document.getElementById("composer");
+  var send = document.getElementById("send");
+  var log = document.getElementById("log");
+
+  function note(text) {
+    log.textContent = text;
+  }
+
+  send.addEventListener("click", function () {
+    var text = composer.value;
+    if (!text || !text.trim()) {
+      note("nothing to send");
+      return;
+    }
+    received.push({
+      text: text,
+      files: Array.prototype.map.call(document.getElementById("files").files, function (file) {
+        return { name: file.name, type: file.type, size: file.size };
+      })
+    });
+    composer.value = "";
+    note("messages=" + received.length);
+  });
+
+  // The test asks for the held context through the actor, but it also checks
+  // that the page itself never had to know about it.
+  window.__setContext = function (value) {
+    window.__context = value;
+  };
+})();
+</script>
+</body>
+</html>

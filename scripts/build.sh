@@ -1,12 +1,12 @@
 #!/bin/bash
 # Build the plugin XPI.
 #
-# The output goes to dist/sidebrowser.xpi. The manifest ID and the file name must
-# match, because Zotero reads the extension ID from the manifest.
+# The output is dist/sidebrowser.xpi. The manifest ID and the file name in the
+# profile must match, because Zotero reads the extension ID from the manifest.
 #
-# Test-only modules (src/selftest-*.mjs, src/testseed.mjs) are left out of the
-# release build. Run `scripts/build.sh --with-tests` to keep them, which is what
-# the headless checks need.
+# Test-only modules (src/selftest-*.mjs, src/testseed.mjs, src/mockpage.html)
+# are left out of the release build. Run `scripts/build.sh --with-tests` to keep
+# them, which is what the headless checks need.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -27,6 +27,7 @@ if [ "$WITH_TESTS" != "--with-tests" ]; then
   EXCLUDES+=(
     -x "src/selftest*.mjs"
     -x "src/testseed.mjs"
+    -x "src/mockpage.html"
   )
 fi
 

@@ -2,25 +2,20 @@
  * Self-test entry point, reachable from the error console as
  * `Zotero.SideBrowser.selfTest()`.
  *
- * It seeds one sample paper, checks the context helpers, and then exercises the
- * real send path against a local mock page when `sidebrowser.testURL` is set.
- * It never sends anything to a real AI service.
+ * It seeds one sample paper, checks the scope and compose helpers, then drives
+ * a local mock page through the real send path when `sidebrowser.testURL` is
+ * set. It never sends anything to a real AI service.
  */
 
-const MOCK_COLLECT_WAIT_MS = 3000;
+const PAGE_WAIT_MS = 20000;
 
 export async function selfTest() {
-  let step = (m) => Zotero.debug(`[Side Browser] selfTest step: ${m}`);
-  step("begin");
   let results = [];
   let record = (name, ok, extra = {}) => {
     results.push({ name, ok: !!ok, ...extra });
   };
 
-  let sidebar = Zotero.SideBrowser?.getActiveSidebar?.() || null;
-
-  step("seeding");
-  // Seed a paper so the context has content in a fresh profile.
+  // Seed a paper, so a fresh profile has something to work with.
   try {
     let { seedSamplePaper } = Zotero.SideBrowser.loadModule("src/testseed.mjs");
     let seeded = await seedSamplePaper();
@@ -29,7 +24,6 @@ export async function selfTest() {
     record("sample paper", false, { error: String(e) });
   }
 
-  step("selecting");
   // Select it, so the scope is not empty.
   try {
     await Zotero.Promise.delay(800);
@@ -45,83 +39,58 @@ export async function selfTest() {
     record("select item", false, { error: String(e) });
   }
 
-  sidebar = Zotero.SideBrowser?.getActiveSidebar?.() || null;
-  record("sidebar exists", !!sidebar);
-  if (!sidebar) {
-    Zotero.debug(`[Side Browser] selfTest: ${JSON.stringify(results)}`);
-    return results;
-  }
-
-  step("refreshing scope");
-  await sidebar._refreshScope();
-  record("providers", sidebar.providers.length >= 4, {
-    value: sidebar.providers.map((p) => p.id).join(","),
+  let section = Zotero.SideBrowser.loadModule("src/section.mjs");
+  record("section registered", !!section.getSectionKey(), { value: section.getSectionKey() });
+  record("providers", section.getProviders().length >= 4, {
+    value: section.getProviders().map((p) => p.id).join(","),
   });
-  record("scope mode", sidebar.scope.mode !== "none", { value: sidebar.scope.mode });
-  record("scope items", sidebar.scope.items.length > 0, {
-    value: sidebar.scope.items.length,
-  });
-  record("composer created", !!sidebar.input);
-  record("checkbox count", Object.keys(sidebar.checkboxes).length === 5);
 
-  let items = sidebar.scope.items;
-  if (items.length) {
-    let context = Zotero.SideBrowser.loadModule("src/context.mjs");
-    record("describeItems", context.describeItems(items).length > 40);
-    step("collecting pdfs");
-    let pdfs = await context.collectPDFs(items);
-    record("pdfs found", pdfs.files.length > 0, {
-      value: pdfs.files.map((f) => f.name),
-      skipped: pdfs.skipped,
+  let api = section.activePane();
+  record("pane open", !!api);
+
+  if (api) {
+    let pane = api.pane;
+    record("pane has a browser", !!pane.browser);
+    let rect = pane.root.getBoundingClientRect();
+    record("pane has real size", rect.width > 100 && rect.height > 100, {
+      value: { width: Math.round(rect.width), height: Math.round(rect.height) },
     });
-    if (pdfs.files.length) {
-      let read = await context.readFiles(pdfs.files.slice(0, 1));
-      record("pdf bytes", read[0].data.length > 100, {
-        value: { name: read[0].name, bytes: read[0].data.length },
-      });
-    }
-    // Point the sidebar at a page that accepts a PDF, so this check measures the
-    // compose logic and not whatever page happens to be loaded.
-    sidebar.pageInfo = {
-      fileInputs: [{ accept: "application/pdf", multiple: true }],
-    };
-    // Re-evaluate the PDF checkbox now that the page accepts documents again.
-    sidebar._updateAttachmentAvailability();
-    let composed = sidebar._compose();
-    record("compose", composed.text.length > 100 && composed.items.length > 0, {
+
+    // The pane must sit inside the item pane, not float over the tab stack.
+    let itemPane = pane.doc.getElementById("zotero-item-pane");
+    let insideItemPane = !!itemPane && itemPane.contains(pane.root);
+    record("pane is inside the item pane", insideItemPane);
+
+    await api.refreshScope();
+    record("scope mode", pane.scope.mode !== "none", { value: pane.scope.mode });
+    record("scope items", pane.scope.items.length > 0, { value: pane.scope.items.length });
+
+    let composed = api.compose();
+    record("compose", composed.text.length > 40, {
       value: { chars: composed.text.length, items: composed.items.length },
     });
-    sidebar.pageInfo = null;
-  }
 
-  // End-to-end check against a local mock page.
-  try {
-    let { testToggle } = Zotero.SideBrowser.loadModule("src/selftest-ui.mjs");
-    await testToggle(record, sidebar);
-  } catch (e) {
-    record("toggle", false, { error: String(e) });
+    if (pane.scope.items.length) {
+      let context = Zotero.SideBrowser.loadModule("src/context.mjs");
+      let pdfs = await context.collectPDFs(pane.scope.items);
+      record("pdfs found", pdfs.files.length > 0, {
+        value: pdfs.files.map((f) => f.name),
+        skipped: pdfs.skipped,
+      });
+      if (pdfs.files.length) {
+        let read = await context.readFiles(pdfs.files.slice(0, 1));
+        record("pdf bytes", read[0].data.length > 100, {
+          value: { name: read[0].name, bytes: read[0].data.length },
+        });
+      }
+    }
   }
 
   try {
     let { testReaderFlow } = Zotero.SideBrowser.loadModule("src/selftest-reader.mjs");
-    await testReaderFlow(record, sidebar);
+    await testReaderFlow(record, section);
   } catch (e) {
     record("reader flow", false, { error: String(e) });
-  }
-
-  let live = "";
-  try {
-    live = Zotero.Prefs.get("sidebrowser.testLive") || false;
-  } catch (e) {
-    live = false;
-  }
-  if (live) {
-    try {
-      let { testLiveProviders } = Zotero.SideBrowser.loadModule("src/selftest-live.mjs");
-      await testLiveProviders(record, sidebar);
-    } catch (e) {
-      record("live providers", false, { error: String(e) });
-    }
   }
 
   let testURL = "";
@@ -130,23 +99,58 @@ export async function selfTest() {
   } catch (e) {
     testURL = "";
   }
-  step(`testURL="${testURL}"`);
-  if (testURL && sidebar) {
-    step("send test");
-    await runSendTest(sidebar, testURL, record);
-    step("send test done");
+  if (testURL && api) {
+    await runSendTest(api, testURL, record);
+  }
+
+  let live = false;
+  try {
+    live = Zotero.Prefs.get("sidebrowser.testLive") || false;
+  } catch (e) {
+    live = false;
+  }
+  if (live && api) {
+    try {
+      let { testLiveProviders } = Zotero.SideBrowser.loadModule("src/selftest-live.mjs");
+      await testLiveProviders(record, api);
+    } catch (e) {
+      record("live providers", false, { error: String(e) });
+    }
+  }
+
+  // Leave the library tab in front with the pane open, for a screenshot.
+  try {
+    let win = Zotero.getMainWindow();
+    win.Zotero_Tabs.select("zotero-pane");
+    await Zotero.Promise.delay(800);
+    let view = win.ZoteroPane.itemsView;
+    let ids = view?.getSortedItems?.(true) || [];
+    if (ids.length) {
+      await view.selectItem(ids[0]);
+    }
+    await Zotero.Promise.delay(1500);
+    section.showInWindow(win);
+  } catch (e) {
+    Zotero.debug(`[Side Browser] Could not return to the library: ${e}`);
   }
 
   Zotero.debug(`[Side Browser] selfTest: ${JSON.stringify(results, null, 1)}`);
+  let failed = results.filter((r) => !r.ok);
+  Zotero.debug(`[Side Browser] selfTest summary: ${results.length} checks, ${failed.length} failed`);
   return results;
 }
 
 /**
- * Drive the full path: navigate, set the provider adapter, insert the composed
- * prompt, attach the PDF, click send, then read the page state back.
+ * Point the pane at a mock page, push a context block, then send from the page
+ * the way a person would: type into the composer and click send.
+ *
+ * This is the check that matters, because it exercises the send intercept and
+ * not a special test message.
  */
-async function runSendTest(sidebar, testURL, record) {
-  sidebar.provider = {
+async function runSendTest(api, testURL, record) {
+  let pane = api.pane;
+
+  pane.provider = {
     id: "mock",
     label: "Mock",
     url: testURL,
@@ -156,74 +160,81 @@ async function runSendTest(sidebar, testURL, record) {
     fileSelectors: ["#files"],
     acceptsDocuments: true,
   };
-  sidebar._fillProviders();
-  await sidebar.open();
-  // `open()` may already be navigating to the provider, so navigate explicitly
-  // and wait for the new page instead of reusing the current one.
-  sidebar._navigate(testURL);
-  for (let i = 0; i < 60; i++) {
-    await Zotero.Promise.delay(250);
-    let current = sidebar._currentURL();
-    if (current === testURL && sidebar._pageLoaded) {
-      break;
-    }
-  }
-  Zotero.debug(`[Side Browser] selfTest: navigated to ${sidebar._currentURL()}`);
+  pane.providerID = "mock";
 
-  for (let i = 0; i < 40; i++) {
-    await Zotero.Promise.delay(250);
-    let a = sidebar._getActor();
-    if (a) {
-      Zotero.debug(`[Side Browser] selfTest: actor found after ${i * 250}ms`);
-      break;
-    }
-    if (i % 8 === 0) {
-      Zotero.debug(`[Side Browser] selfTest: waiting for actor, url=${sidebar._currentURL()}`);
-    }
-  }
-  let actor = sidebar._getActor();
-  record("actor reached", !!actor);
-  if (!actor) {
+  api.navigate(testURL);
+  let loaded = await waitForPane(api, testURL);
+  record("mock page loaded", loaded, { value: currentURL(pane) });
+  if (!loaded) {
     return;
   }
-  await sidebar._applyAdapter();
-  await Zotero.Promise.delay(1000);
+  await Zotero.Promise.delay(800);
 
-  let composed = sidebar._compose();
-  let files = [];
-  if (composed.items.length) {
-    let context = Zotero.SideBrowser.loadModule("src/context.mjs");
-    let pdfs = await context.collectPDFs(composed.items);
-    if (pdfs.files.length) {
-      files = await context.readFiles(pdfs.files);
+  await api.refreshScope();
+  await api.showContext();
+  record("context pushed", (await readPageContext(pane)).length > 40, {
+    value: (await readPageContext(pane)).length,
+  });
+
+  // Type the user's own words, then click send. The page records what arrived.
+  await typeInPage(pane, "Please summarise this.");
+  await clickSend(pane);
+  await Zotero.Promise.delay(2500);
+
+  let state = await readMockState(pane);
+  record("page received one message", state?.messages === 1, { value: state?.messages });
+  let message = state?.received?.[0] || {};
+  record("message carries the context", String(message.text || "").includes("Title:"), {
+    value: { chars: String(message.text || "").length },
+  });
+  record("message keeps the user words", String(message.text || "").includes("Please summarise this."));
+}
+
+function currentURL(pane) {
+  try {
+    return pane.browser.currentURI?.spec || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function waitForPane(api, url) {
+  let start = Date.now();
+  while (Date.now() - start < PAGE_WAIT_MS) {
+    await Zotero.Promise.delay(250);
+    if (currentURL(api.pane).startsWith(url)) {
+      return true;
     }
   }
-  record("prompt ready", composed.text.length > 0, {
-    value: { chars: composed.text.length, files: files.length },
-  });
+  return false;
+}
 
-  let result = await actor.sendQuery("compose", {
-    text: composed.text,
-    files,
-    send: true,
-  });
-  record("compose sent", !!result?.ok, { value: result });
-
-  await Zotero.Promise.delay(MOCK_COLLECT_WAIT_MS);
-  let state = await actor.sendQuery("current-url", {});
-  record("page url", state?.url === testURL, { value: state?.url });
-
-  let probe = Zotero.SideBrowser.loadModule("src/selftest-probe.mjs");
-  let received = await probe.readMockState(actor);
-  // The page counter is authoritative: it only increments inside the page.
-  let arrived = received?.messages >= 1 || /messages=1/.test(received?.log || "");
-  record("page received message", arrived, { value: received });
-  if (received?.received?.[0]) {
-    record("message has prompt", received.received[0].text.length > 100, {
-      value: { chars: received.received[0].text.length },
-    });
-    record("message has pdf", received.received[0].files?.[0]?.type === "application/pdf", {
-      value: received.received[0].files,
-    });
+async function pageQuery(pane, name, data = {}) {
+  let actor = null;
+  try {
+    actor = pane.browser.browsingContext?.currentWindowGlobal?.getActor("SideBrowser");
+  } catch (e) {
+    actor = null;
   }
+  if (!actor) {
+    return null;
+  }
+  return actor.sendQuery(name, data);
+}
+
+async function readPageContext(pane) {
+  let state = await pageQuery(pane, "read-mock-state");
+  return state?.context || "";
+}
+
+async function readMockState(pane) {
+  return pageQuery(pane, "read-mock-state");
+}
+
+async function typeInPage(pane, text) {
+  return pageQuery(pane, "insert", { text });
+}
+
+async function clickSend(pane) {
+  return pageQuery(pane, "click-send");
 }

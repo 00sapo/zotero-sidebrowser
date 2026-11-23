@@ -6,28 +6,37 @@ one click.
 
 ## What it does
 
-- Shows a browser in a resizable column on the right edge of Zotero. The column
-  is visible in library tabs and in reader tabs, so the same session follows you.
-- Keeps session cookies. Log in once and the session survives restarts, because
-  the side browser uses the normal Zotero profile.
-- Keeps links inside the sidebar. Shift-click, `target="_blank"`, and links to
-  other sites open in your system browser instead.
-- Offers context options that follow the tab you are in.
+- Adds an AI section to Zotero's right column, with an icon in the strip at the
+  far right, next to the Info, Abstract, and Tags sections.
+- Shows a chat page (ChatGPT, Claude, DeepSeek, Mistral, or a custom URL) in that
+  section. Login cookies stay, because the browser uses the Zotero profile.
+- Adds the paper context to your message when you send it from the chat page.
+  There is no separate prompt box to fill.
+- Keeps links inside the pane. Shift-click, `target="_blank"`, and links to other
+  sites open in your system browser.
 
-## Context options
+## How the context works
 
-Next to a paper in the reader, the composer offers:
+The pane holds a context block: the title, authors, date, venue, DOI, and abstract
+of the paper in the reader, the selected papers, or the papers in the list. When
+you click the chat page's send button or press Enter, the plugin puts the block in
+front of your text, then lets the site send it. The block goes out once for each
+paper. Pick another paper and the next message carries the new block.
 
-- Include this paper: sends the title, authors, date, venue, DOI, and abstract.
-- Attach the PDF file: hands the real PDF to the chat page through its own file
-  input.
-- Include the selected text: when you select text in the PDF, the selection is
-  shown and sent, with room for your own question or comment below it.
+Controls under the page:
 
-In a library tab with a paper selected, the composer offers the same options for
-the selected papers. With several papers selected, the selection wins. With
-nothing selected, every paper in the current list becomes the context, capped by
-the paper limit in the preferences.
+- Check boxes choose what the block holds. In the reader, "Include the selected
+  text" adds the text you selected through the "Ask about this" button.
+- Attach PDF hands the real PDF to the page's own file input. You click it before
+  you send, because an upload takes a moment.
+- Insert context puts the block in the page's message box, so you can read it.
+- Copy puts the block on the clipboard.
+- The pencil button in the toolbar shows a text box for notes that join the block.
+  It is hidden by default. The preference "Show the message box in the pane" keeps
+  it open.
+
+Turn off "Add the paper context to every message" in the preferences to send
+messages without the block.
 
 ## Install
 
@@ -43,12 +52,8 @@ build. A distributed copy would need signing.
 
 ## Use
 
-- Toggle the sidebar from View, then Side Browser, or from the pencil button in
-  the sidebar toolbar.
-- Choose the AI service from the list in the sidebar toolbar. The pencil button
-  shows or hides the message composer.
-- Type a question and press Send, or press Ctrl+Enter in the message box.
-- Copy puts the whole prompt, context included, on the clipboard.
+- Open the pane from View, then AI sidebar, or click its icon in the right strip.
+- Choose the AI service from the list in the pane toolbar.
 
 ## How sending works
 
@@ -71,17 +76,18 @@ copies the prompt to the clipboard instead of failing silently. Selectors live i
 - Some sites change their composer markup and need a selector update.
 - A PDF must exist as a local file. A linked file that is missing on disk is
   reported in the status line instead of being attached.
-- The sidebar width competes with the collections pane, the item list, and the
-  item pane. On a narrow window it is capped so the other panes stay usable.
+- Each tab has its own pane and its own browser. Zotero rebuilds a pane when you
+  change tabs, and a browser that moves loses its page. A new pane opens the last
+  address you visited, which is usually your last chat.
 
 ## Preferences
 
 Tools, then Settings, then Side Browser:
 
-- Enable the sidebar.
+- Show the pane.
 - Default AI service, and a custom URL.
-- Attach the PDF by default.
-- Sidebar width and the maximum number of papers taken from a list.
+- Add the paper context to every message, and show the message box.
+- The maximum number of papers taken from a list.
 - Extra providers as JSON, each with a `label` and a `url`, with optional
   `composerSelectors`, `sendSelectors`, `sendMode`, and `fileSelectors`.
 
@@ -105,14 +111,15 @@ node scripts/update-manifest.mjs --tag v0.1.0 --repo 00sapo/zotero-sidebrowser -
 
 - `src/core.mjs` wires the plugin: resource alias, window actor, per-window
   sidebar, and the console API.
-- `src/sidebar.mjs` builds and drives the panel.
+- `src/section.mjs` registers the item pane section and drives each pane.
+- `src/scope.mjs` decides which papers are the context and builds the block.
 - `src/actors/ai-child.mjs` is the only file that runs inside the chat page.
 - `src/context.mjs` turns Zotero items into prompts and file lists.
 - `src/providers/registry.mjs` holds the per-site selectors.
 - `DESIGN.md` records the measured Zotero behaviour the code depends on.
 
-`Zotero.SideBrowser` in the error console offers `open()`, `close()`, `toggle()`,
-`ask(text)`, `reload()`, `describeContext()`, and `selfTest()`. The self test
+`Zotero.SideBrowser` in the error console offers `open()`, `reload()`, `panes()`,
+`ask(text)`, and `selfTest()`. The self test
 seeds one sample paper, checks the context helpers, drives a local mock page
 through a full send with a PDF attached, and opens the reader to check the
 selection path.

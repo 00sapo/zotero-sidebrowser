@@ -2,16 +2,16 @@
  * Preference access for the plugin.
  *
  * `Zotero.Prefs` adds the `extensions.zotero.` branch itself, so callers pass
- * keys such as `sidebrowser.width`.
+ * keys such as `sidebrowser.provider`.
  */
 
 export const DEFAULTS = {
-  width: 460,
-  open: false,
+  open: true,
   provider: "chatgpt",
   customURL: "",
-  includePDF: true,
-  autoSend: false,
+  lastURL: "",
+  autoContext: true,
+  showComposer: false,
   maxItems: 30,
   customProviders: "[]",
 };
