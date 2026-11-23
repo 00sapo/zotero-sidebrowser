@@ -20,6 +20,7 @@ import { PaneCSS, paneMarkup } from "./ui/styles.mjs";
 import { buildScope, compose, defaultOptions } from "./scope.mjs";
 import { DEFAULT_PROVIDERS, findProvider, loadCustomProviders } from "./providers/registry.mjs";
 import { getPref, setPref } from "./prefs.mjs";
+import * as multi from "./multi.mjs";
 
 const PLUGIN_ID = "sidebrowser@00sapo.dev";
 const PANE_ID = "sidebrowser-pane";
@@ -1173,6 +1174,9 @@ export function activePane() {
  */
 export function showInWindow(win) {
   setPref("open", true);
+  if (multi.activate(win)) {
+    return true;
+  }
   let api = paneForWindow(win);
   if (api) {
     api.reveal();
