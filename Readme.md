@@ -15,6 +15,14 @@ one click.
 - Keeps links inside the pane. Shift-click, `target="_blank"`, and links to other
   sites open in your system browser.
 
+## Several papers selected
+
+With several papers selected, or none, Zotero hides its item sections, so the
+normal pane icon is gone. The plugin adds its own icon to the right strip in that
+case. Click it and the pane replaces the batch edit message. The selected papers
+are the context, or the papers in the list when nothing is selected. Click the
+icon again to go back to the message.
+
 ## How the context works
 
 The pane holds a context block: the title, authors, date, venue, DOI, and abstract
