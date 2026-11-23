@@ -120,6 +120,7 @@ node scripts/update-manifest.mjs --tag v0.1.0 --repo 00sapo/zotero-sidebrowser -
 - `src/core.mjs` wires the plugin: resource alias, window actor, per-window
   sidebar, and the console API.
 - `src/section.mjs` registers the item pane section and drives each pane.
+- `src/multi.mjs` adds the icon and the pane for the no-item and many-item views.
 - `src/scope.mjs` decides which papers are the context and builds the block.
 - `src/actors/ai-child.mjs` is the only file that runs inside the chat page.
 - `src/context.mjs` turns Zotero items into prompts and file lists.
