@@ -1,0 +1,98 @@
+name: Release
+
+# Build the plugin on a version tag and publish it as a GitHub release.
+#
+# A tag of the form v0.1.0 produces:
+#   release v0.1.0                      sidebrowser.xpi and update.json
+#   rolling release tagged `release`    the newest update.json only
+#
+# The plugin manifest points its update_url at
+# .../releases/download/release/update.json, so the rolling release is what makes
+# Zotero see a new version.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, for example v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Resolve the tag
+        id: tag
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            value="${{ inputs.tag }}"
+          else
+            value="${GITHUB_REF_NAME}"
+          fi
+          case "$value" in
+            v*) ;;
+            *) echo "The tag must start with 'v', got: $value" >&2; exit 1 ;;
+          esac
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+
+      - name: Check the manifest matches the tag
+        run: |
+          set -eu
+          manifest_version=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
+          tag_version="${{ steps.tag.outputs.value }}"
+          tag_version="${tag_version#v}"
+          if [ "$manifest_version" != "$tag_version" ]; then
+            echo "manifest.json says $manifest_version but the tag says $tag_version" >&2
+            exit 1
+          fi
+          echo "manifest version $manifest_version matches the tag"
+
+      - name: Build the XPI
+        run: ./scripts/build.sh
+
+      - name: Write update.json
+        run: |
+          node scripts/update-manifest.mjs \
+            --xpi dist/sidebrowser.xpi \
+            --tag "${{ steps.tag.outputs.value }}" \
+            --repo "${{ github.repository }}" \
+            --out dist/update.json
+
+      - name: Publish the versioned release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          tag="${{ steps.tag.outputs.value }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/sidebrowser.xpi dist/update.json --clobber
+          else
+            gh release create "$tag" \
+              --title "Side Browser ${tag}" \
+              --notes "Side Browser ${tag}. See Readme.md for features, limits, and how to install." \
+              dist/sidebrowser.xpi dist/update.json
+          fi
+
+      - name: Update the rolling update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          if gh release view release >/dev/null 2>&1; then
+            gh release upload release dist/update.json --clobber
+          else
+            gh release create release \
+              --title "Update manifest" \
+              --notes "Holds update.json so Zotero can find new versions." \
+              dist/update.json
+          fi

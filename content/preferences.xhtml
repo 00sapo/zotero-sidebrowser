@@ -1,0 +1,77 @@
+<!--
+  Preferences pane for Side Browser.
+
+  Zotero loads this file as an XHTML fragment inside the preferences window, so
+  it must not contain <html>, <head>, or <body> tags. The script next to it wires
+  the controls to plugin preferences.
+-->
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml">
+  <html:style>
+    .sb-prefs-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+    .sb-prefs-row > label { min-width: 190px; }
+    .sb-prefs-row input[type="text"] { flex: 1 1 auto; }
+    .sb-prefs-hint { font-size: 11px; opacity: 0.7; margin: 2px 0 10px 0; }
+    .sb-prefs-section { font-weight: 600; margin-top: 14px; }
+  </html:style>
+
+  <groupbox>
+    <label><html:h2>Side Browser</html:h2></label>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-enabled">Enable the sidebar</label>
+      <checkbox id="sb-enabled" preference="extensions.zotero.sidebrowser.enabled"/>
+    </html:div>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-provider">Default AI service</label>
+      <html:select id="sb-provider" preference="extensions.zotero.sidebrowser.provider">
+        <html:option value="chatgpt">ChatGPT</html:option>
+        <html:option value="claude">Claude</html:option>
+        <html:option value="deepseek">DeepSeek</html:option>
+        <html:option value="mistral">Mistral</html:option>
+        <html:option value="custom">Custom URL</html:option>
+      </html:select>
+    </html:div>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-custom-url">Custom URL</label>
+      <html:input id="sb-custom-url" type="text" preference="extensions.zotero.sidebrowser.customURL"
+                  placeholder="https://example.com/chat"/>
+    </html:div>
+    <html:div class="sb-prefs-hint">
+      Used when the default AI service is set to Custom URL.
+    </html:div>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-include-pdf">Attach the PDF by default</label>
+      <checkbox id="sb-include-pdf" preference="extensions.zotero.sidebrowser.includePDF"/>
+    </html:div>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-width">Sidebar width in pixels</label>
+      <html:input id="sb-width" type="number" min="300" max="1200"
+                  preference="extensions.zotero.sidebrowser.width"/>
+    </html:div>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-max-items">Maximum papers from a list</label>
+      <html:input id="sb-max-items" type="number" min="1" max="200"
+                  preference="extensions.zotero.sidebrowser.maxItems"/>
+    </html:div>
+    <html:div class="sb-prefs-hint">
+      Caps how many listed papers are sent as context, to keep the message small.
+    </html:div>
+
+    <html:div class="sb-prefs-row">
+      <label for="sb-custom-providers">Extra providers</label>
+      <html:textarea id="sb-custom-providers" rows="4"
+                     preference="extensions.zotero.sidebrowser.customProviders"></html:textarea>
+    </html:div>
+    <html:div class="sb-prefs-hint">
+      A JSON array. Each entry needs a label and a url, for example
+      [{"label": "Local model", "url": "http://localhost:3000"}]. Optional keys:
+      composerSelectors, sendSelectors, sendMode, fileSelectors.
+    </html:div>
+  </groupbox>
+</vbox>
