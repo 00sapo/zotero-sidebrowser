@@ -11,8 +11,9 @@ export const PaneCSS = `
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100%;
-  min-height: 420px;
+  /* A tall, vertical page: most of the window height, never less than 640px.
+     The item pane scrolls if the window is shorter. */
+  height: max(640px, calc(100vh - 150px));
   font: message-box;
   color: var(--fill-primary, #000);
 }
@@ -70,7 +71,7 @@ export const PaneCSS = `
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: 260px;
+  min-height: 440px;
   border: 1px solid var(--fill-quinary, rgba(0, 0, 0, 0.15));
   border-radius: 5px;
   overflow: hidden;
@@ -175,7 +176,7 @@ export const PaneCSS = `
 }
 
 .sb-root .sb-actions button.sb-primary {
-  background: var(--accent-blue10, #2b6cb0);
+  background: var(--accent-blue, #4072e5);
   border-color: transparent;
   color: #fff;
 }
@@ -185,7 +186,8 @@ export const PaneCSS = `
 }
 
 .sb-root .sb-actions button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
+  filter: grayscale(1);
   cursor: default;
 }
 
@@ -231,9 +233,8 @@ export const PaneCSS = `
 
 /* A custom item pane section draws its body inside a collapsible section, and
    that body must not add its own scrollbar around the browser. */
-item-pane-custom-section[data-pane="sidebrowser-pane"] [data-type="body"] {
+item-pane-custom-section [data-type="body"] > .sb-root {
   overflow: hidden;
-  height: 100%;
 }
 `;
 
