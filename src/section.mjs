@@ -169,6 +169,15 @@ function providerFor(id) {
  * @param {Document} doc
  * @param {HTMLElement} body
  */
+export function mountPane(doc, body) {
+  return renderPane(doc, body);
+}
+
+/** Stop and forget a pane that this plugin mounted by hand. */
+export function unmountPane(body) {
+  destroyPane(body);
+}
+
 function renderPane(doc, body) {
   let existing = panes.get(body);
   if (existing) {
