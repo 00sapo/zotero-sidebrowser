@@ -231,6 +231,13 @@ export const PaneCSS = `
   color: var(--tag-red, #b3261e);
 }
 
+/* In the multi-item panel the pane fills the panel instead of using a fixed
+   height. */
+.sb-multi-body > .sb-root {
+  height: 100%;
+  min-height: 0;
+}
+
 /* A custom item pane section draws its body inside a collapsible section, and
    that body must not add its own scrollbar around the browser. */
 item-pane-custom-section [data-type="body"] > .sb-root {
