@@ -26,6 +26,9 @@ const PLUGIN_ID = "sidebrowser@00sapo.dev";
 const PANE_ID = "sidebrowser-pane";
 const ACTOR_TIMEOUT_MS = 20000;
 
+/** The pane never gets shorter than this, even in a very short window. */
+const MIN_PANE_HEIGHT = 480;
+
 /** Every live pane, keyed by the body element Zotero handed over. */
 const panes = new Map();
 
@@ -314,6 +317,8 @@ function createPaneApi(pane) {
   let progressListener = null;
   let attachTimer = null;
   let actorWatch = null;
+  let fitObserver = null;
+  let fitTarget = null;
 
   let api = {
     get pane() {
@@ -332,6 +337,7 @@ function createPaneApi(pane) {
       navigate(startURL);
       refreshScope();
       startActorWatch();
+      watchSize();
     },
 
     /** Release every listener and the browser. */
@@ -360,6 +366,10 @@ function createPaneApi(pane) {
       if (actorWatch) {
         win.clearInterval(actorWatch);
         actorWatch = null;
+      }
+      if (fitObserver) {
+        fitObserver.disconnect();
+        fitObserver = null;
       }
       try {
         browser.remove();
@@ -419,6 +429,45 @@ function createPaneApi(pane) {
       reveal(pane);
     },
   };
+
+  // ------------------------------------------------------------------- size
+
+  /**
+   * Make the pane as tall as the visible area, and keep it so.
+   *
+   * The pane sits in a scrolling column of sections. The scroll area is the only
+   * thing that knows the visible height, so its size drives the pane. In the
+   * multi-item panel the panel itself is the area and CSS does the work.
+   */
+  function watchSize() {
+    let area = root.closest("#zotero-view-item");
+    if (!area || !win.ResizeObserver) {
+      return;
+    }
+    fitTarget = area;
+    fitObserver = new win.ResizeObserver(() => fit());
+    fitObserver.observe(area);
+    fit();
+  }
+
+  function fit() {
+    if (!fitTarget || !root.isConnected) {
+      return;
+    }
+    let areaHeight = fitTarget.clientHeight;
+    if (!areaHeight) {
+      return;
+    }
+    // The section header sits above the body and is part of the visible area.
+    let head = body_header();
+    let used = (head?.getBoundingClientRect().height || 36) + 12;
+    let height = Math.max(MIN_PANE_HEIGHT, Math.floor(areaHeight - used));
+    root.style.height = `${height}px`;
+  }
+
+  function body_header() {
+    return pane.body?.closest("collapsible-section")?.querySelector(".head");
+  }
 
   // ---------------------------------------------------------------- toolbar
 

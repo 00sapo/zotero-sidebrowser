@@ -11,8 +11,8 @@ export const PaneCSS = `
   display: flex;
   flex-direction: column;
   width: 100%;
-  /* A tall, vertical page: most of the window height, never less than 640px.
-     The item pane scrolls if the window is shorter. */
+  /* section.mjs sets the real height from the item pane scroll area and keeps
+     it in step with the window. This is the value before that runs. */
   height: max(640px, calc(100vh - 150px));
   font: message-box;
   color: var(--fill-primary, #000);

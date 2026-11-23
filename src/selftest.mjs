@@ -65,6 +65,8 @@ export async function selfTest() {
     record("scope mode", pane.scope.mode !== "none", { value: pane.scope.mode });
     record("scope items", pane.scope.items.length > 0, { value: pane.scope.items.length });
 
+    await checkFill(record, pane);
+
     let composed = api.compose();
     record("compose", composed.text.length > 40, {
       value: { chars: composed.text.length, items: composed.items.length },
@@ -295,4 +297,38 @@ async function testMultiSelect(record, section) {
   await view.selectItem(ids[0]);
   await Zotero.Promise.delay(1200);
   record("multi: icon hidden for one paper", !!wrapper && wrapper.hidden);
+}
+
+/**
+ * The pane must fill the visible height of the item pane and follow the window.
+ */
+async function checkFill(record, pane) {
+  let win = pane.doc.defaultView;
+  let area = pane.root.closest("#zotero-view-item");
+  if (!area) {
+    record("fill: scroll area found", false);
+    return;
+  }
+  await Zotero.Promise.delay(600);
+  let head = pane.body.closest("collapsible-section")?.querySelector(".head");
+  let headHeight = head?.getBoundingClientRect().height || 36;
+  let measure = () => ({
+    area: area.clientHeight,
+    pane: Math.round(pane.root.getBoundingClientRect().height),
+    page: Math.round(pane.root.querySelector(".sb-page").getBoundingClientRect().height),
+  });
+  let before = measure();
+  record("fill: pane matches visible height", Math.abs(before.pane + headHeight - before.area) < 40, { value: before });
+  record("fill: page is taller than wide", before.page > pane.root.getBoundingClientRect().width, { value: before });
+
+  let originalHeight = win.outerHeight;
+  win.resizeTo(win.outerWidth, 760);
+  await Zotero.Promise.delay(1500);
+  let smaller = measure();
+  win.resizeTo(win.outerWidth, 1000);
+  await Zotero.Promise.delay(1500);
+  let larger = measure();
+  record("fill: follows the window", larger.pane > smaller.pane + 100, { value: { smaller, larger } });
+  win.resizeTo(win.outerWidth, originalHeight);
+  await Zotero.Promise.delay(800);
 }
