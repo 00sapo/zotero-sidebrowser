@@ -118,8 +118,14 @@ export async function selfTest() {
     }
   }
 
-  // Leave the library tab in front with the pane open, for a screenshot.
   try {
+    await testMultiSelect(record, section);
+  } catch (e) {
+    record("multi select", false, { error: String(e) });
+  }
+
+  // Leave the library tab in front with the pane open, for a screenshot.
+  if (!Zotero.Prefs.get("sidebrowser.testHoldMulti")) try {
     let win = Zotero.getMainWindow();
     win.Zotero_Tabs.select("zotero-pane");
     await Zotero.Promise.delay(800);
@@ -237,4 +243,56 @@ async function typeInPage(pane, text) {
 
 async function clickSend(pane) {
   return pageQuery(pane, "click-send");
+}
+
+/**
+ * Select two papers. Zotero then shows its message page, so the registered
+ * section is hidden. The plugin's own icon must appear, open the pane, and give
+ * it both papers as the context.
+ */
+async function testMultiSelect(record, section) {
+  let win = Zotero.getMainWindow();
+  win.Zotero_Tabs.select("zotero-pane");
+  await Zotero.Promise.delay(800);
+
+  let second = new Zotero.Item("journalArticle");
+  second.setField("title", "A second paper for the multi select test");
+  await second.saveTx();
+
+  let view = win.ZoteroPane.itemsView;
+  let ids = view.getSortedItems(true);
+  await view.selectItems(ids);
+  await Zotero.Promise.delay(1500);
+
+  let itemPane = win.document.getElementById("zotero-item-pane");
+  record("multi: item details replaced", ["message", "batch-edit-prompt"].includes(itemPane.getAttribute("view-type")), {
+    value: itemPane.getAttribute("view-type"),
+  });
+
+  let wrapper = win.document.getElementById("sidebrowser-multi-button");
+  record("multi: icon shown", !!wrapper && !wrapper.hidden);
+  wrapper?.querySelector(".btn")?.click();
+  await Zotero.Promise.delay(1800);
+
+  let panel = win.document.getElementById("sidebrowser-multi");
+  let rect = panel?.getBoundingClientRect();
+  record("multi: pane visible", !!rect && rect.width > 100 && rect.height > 100, {
+    value: rect && { width: Math.round(rect.width), height: Math.round(rect.height) },
+  });
+
+  let api = section.activePane();
+  await api?.refreshScope();
+  record("multi: both papers are the context", api?.pane.scope.items.length === ids.length, {
+    value: { mode: api?.pane.scope.mode, items: api?.pane.scope.items.length, selected: ids.length },
+  });
+  record("multi: prompt lists both", (api?.compose().text.match(/Paper \d/g) || []).length >= 2);
+
+  if (Zotero.Prefs.get("sidebrowser.testHoldMulti")) {
+    return;
+  }
+
+  // Back to one paper: the registered section takes over and the icon hides.
+  await view.selectItem(ids[0]);
+  await Zotero.Promise.delay(1200);
+  record("multi: icon hidden for one paper", !!wrapper && wrapper.hidden);
 }
