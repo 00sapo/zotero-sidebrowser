@@ -180,7 +180,7 @@ selection path.
 
 ### Releases and auto-update
 
-Tag a commit as `v0.1.0` and push the tag. The workflow in
+Tag a commit as `v0.2.0` and push the tag. The workflow in
 `.github/workflows/release.yml` checks that `manifest.json` matches the tag,
 builds the XPI, writes `update.json` with the XPI hash, and publishes both to a
 GitHub release. It also refreshes the rolling `release` release, which holds only
@@ -191,6 +191,6 @@ To check the pieces by hand:
 
 ```sh
 ./scripts/build.sh
-node scripts/update-manifest.mjs --tag v0.1.0 --repo 00sapo/zotero-sidebrowser --out dist/update.json
+node scripts/update-manifest.mjs --tag v0.2.0 --repo 00sapo/zotero-sidebrowser --out dist/update.json
 ```
 

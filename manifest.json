@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Side Browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A web browser in Zotero's right sidebar, with paper context for AI assistants.",
   "author": "Federico",
   "homepage_url": "https://github.com/00sapo/zotero-sidebrowser",
