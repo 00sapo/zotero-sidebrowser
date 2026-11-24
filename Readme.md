@@ -37,6 +37,35 @@ paying the Big Techs.
 - Gemini
 - Perplexity
 
+## Features
+
+- No API key and no subscription. You use the free web chats that you already
+  have an account for, and the site's own limits apply.
+- A real pane in Zotero's right column, with its own icon in the strip next to
+  Info, Abstract, and Tags. It follows the light and dark theme.
+- Your papers go with your message. You type in the chat page as usual, and when
+  you press send the plugin attaches the files you chose.
+- Five choices of what to attach: paper metadata, the text you selected, your
+  annotations, the PDF, and other attachments such as an EPUB.
+- Real files, not pasted text. The chat sees the real PDF with its figures, and
+  your message box stays clean.
+- Works in the library and in the reader. Select text in a PDF, click "Ask about
+  this", and the selection travels with your next message.
+- Works on many papers at once. Select several, click the icon in the strip, and
+  ask about all of them.
+- Edit before you send. "Insert context to edit" puts the text in the message box,
+  and "Copy context" puts it on the clipboard.
+- Tall by default and resizable. The pane fills the window height, follows the
+  window, and has a drag bar and zoom buttons.
+- Remembers where you were. Your login stays, and a new tab reopens the last chat
+  address you visited, which is usually your last conversation.
+- Your choice of service: ChatGPT, Claude, DeepSeek, Mistral, or any chat page
+  with a custom URL and your own selectors.
+- Clear messages. What was attached, and what went wrong, shows as a Zotero
+  notification instead of text hidden at the bottom of the pane.
+- Private by design. Files go only to the chat page that you chose. The plugin
+  has no server of its own.
+
 ## Install
 
 1. Build the XPI: `scripts/build.sh`. Add `--with-tests` to keep the self-test
