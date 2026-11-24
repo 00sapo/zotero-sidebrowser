@@ -207,3 +207,18 @@ found, and which file inputs the page accepts.
   the dark pane (#303030): gold #9c7200, teal #0c8599, green #2b8a3e.
 - A `<select>` cannot show an icon per row, so the service list is a button and a
   listbox drawn by the pane.
+
+## File shapes
+
+- A page's `accept` list decides the shape. `_forThisPage` reads it and marks a
+  text file `asPdf` or `asImage`.
+- Text to PDF is drawn here, not by a library: Helvetica text on letter pages, with
+  Latin-1 characters only.
+- Text to a picture is drawn on a canvas inside the page script, in the page's own
+  realm, and exported with `toDataURL`. Zotero gives chrome no `drawWindow` and no
+  print settings service, so chrome cannot make a picture itself.
+- The text of a PDF comes from `Zotero.PDFWorker.getFullText`, asked for only when
+  a page refuses the PDF. The page script asks the parent through `pdf-text`, and
+  the parent finds the attachment by its file name.
+- A plain Zotero item cannot be handed to a chat, so the metadata is always a text
+  file that may become a PDF or a picture.

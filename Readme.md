@@ -85,8 +85,18 @@ files:
 - Other attachments: the other attachments of the paper that exist as local
   files, such as an EPUB or a Word file. Each one must be under 30 MB.
 
-A text file that a site will not take as Markdown is offered again as plain text,
-and then as a small PDF, so a chat that reads only documents still gets the words.
+Each file changes shape to suit the page, because the sites do not take the same
+kinds of file:
+
+- A text file first goes as Markdown, then as plain text.
+- A page that takes documents but no text gets the text as a small PDF.
+- A page that takes pictures only, such as Brave Leo or Euria, gets the text as a
+  picture of it.
+- A page that takes no PDFs, such as Duck.ai with a text file, gets the words of
+  the PDF instead.
+
+So the same paper reaches a chat that reads documents, one that reads pictures,
+and one that reads only text.
 
 Three buttons sit under the list:
 
