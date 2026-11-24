@@ -158,3 +158,18 @@ found, and which file inputs the page accepts.
   the `view-type` attribute puts the plugin page back in front.
 - The sidenav empties itself on reconnect, so another observer adds the button
   again.
+
+## Send takeover with files
+
+- The actor stops the page's own send, with `preventDefault` and
+  `stopImmediatePropagation` in a plain capture listener. It then asks the parent
+  for the files with `sendQuery("get-package")`, attaches them, waits until the
+  send button works again, and sends the message itself.
+- The files are not pushed ahead of time. The page only learns a short key, so a
+  change of paper does not read any PDF from disk.
+- Several files go into one `DataTransfer`. A second assignment to `input.files`
+  would replace the first.
+- Page zoom is `browser.browsingContext.fullZoom`. A new browsing context starts
+  at 100%, so the pane applies the saved zoom after every load.
+- A pointer capture on the resize handle keeps the move events coming while the
+  pointer is over the browser, which swallows plain mouse events.
