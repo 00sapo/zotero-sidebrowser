@@ -210,15 +210,35 @@ found, and which file inputs the page accepts.
 
 ## File shapes
 
-- A page's `accept` list decides the shape. `_forThisPage` reads it and marks a
-  text file `asPdf` or `asImage`.
-- Text to PDF is drawn here, not by a library: Helvetica text on letter pages, with
-  Latin-1 characters only.
-- Text to a picture is drawn on a canvas inside the page script, in the page's own
-  realm, and exported with `toDataURL`. Zotero gives chrome no `drawWindow` and no
-  print settings service, so chrome cannot make a picture itself.
-- The text of a PDF comes from `Zotero.PDFWorker.getFullText`, asked for only when
-  a page refuses the PDF. The page script asks the parent through `pdf-text`, and
-  the parent finds the attachment by its file name.
-- A plain Zotero item cannot be handed to a chat, so the metadata is always a text
-  file that may become a PDF or a picture.
+`file-transfer.mjs` prepares files before automatic attachment and native dragging.
+Brave Leo and Euria use the `images` file mode.
+Duck.ai uses the `pdf` file mode for text.
+Other services keep their PDF attachments unchanged.
+
+A local chrome document loads the PDF.js version that Zotero includes.
+The document never loads an AI page or remote script.
+PDF.js renders every PDF page to a separate PNG with a white background.
+Scanned pages retain their images without a text layer.
+The renderer uses approximately 144 DPI and limits each side to 2400 pixels.
+
+Conversion errors enter the existing skipped-file report and appear in an error dialog.
+A PDF conversion fails if its images exceed 128 MB.
+The renderer returns no partial set of pages for a failed PDF.
+Text conversions live in `file-shapes.mjs`, which the page actor also uses for file-input fallbacks.
+
+## Native file dragging
+
+The user clicks “Prepare drag files” before starting a drag.
+The plugin converts files for the selected service and writes private temporary copies.
+The button then becomes “Drag files into chat”.
+The native `dragstart` handler adds each file as `application/x-moz-file` data.
+
+A trusted drop carries the package key to the page actor.
+If the page handles the drop, the actor disarms automatic attachment for that package.
+A canceled drag leaves automatic attachment armed.
+Automatic attachment remains available for pages without file-drop support.
+
+Each temporary directory uses permission `0700`, and its files use permission `0600`.
+Prepared copies expire after ten minutes or when the context changes.
+The plugin retains copies from completed drags for five minutes so that the page can finish reading them.
+Zotero also removes its temporary directory during shutdown.

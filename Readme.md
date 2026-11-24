@@ -22,6 +22,7 @@ paying the Big Techs.
 
 - Euria
 - Ecosia AI
+- Mistral Le Chat
 
 ### Free services with privacy-respecting policies
 
@@ -36,6 +37,7 @@ paying the Big Techs.
 
 - ChatGPT
 - DeepSeek
+- Mistral Le Chat
 - Claude
 - Gemini
 
@@ -45,7 +47,7 @@ paying the Big Techs.
   account for, and the site's own limits apply.
 - One pane in Zotero's right column, with its own icon in the strip next to Info,
   Abstract, and Tags. It follows the light and dark theme.
-- Ten services ready to use: ChatGPT, Claude, DeepSeek,
+- Eleven services ready to use: ChatGPT, Claude, DeepSeek, Mistral Le Chat,
   Gemini, Euria, Ecosia AI, Lumo, Duck.ai, Brave Leo, and Venice, plus
   any other chat page through a custom URL.
 - Your papers go with your message. You type in the chat page as usual, and the
@@ -68,6 +70,9 @@ paying the Big Techs.
   address you visited, which is usually your last conversation.
 - Quiet. Nothing is reported when all goes well, and a problem opens one dialog.
 
+Automatic attachment and sending remain unreliable on Mistral.
+Use file dragging if automatic attachment fails.
+
 ## What the pane sends
 
 Under the page, the list "Attach on send" has five check boxes. Each one adds
@@ -87,26 +92,36 @@ kinds of file:
 
 - A text file first goes as Markdown, then as plain text.
 - A page that takes documents but no text gets the text as a small PDF.
-- A page that takes pictures only, such as Brave Leo or Euria, gets the text as a
-  picture of it.
-- A page that takes no PDFs, such as Duck.ai with a text file, gets the words of
-  the PDF instead.
+- Brave Leo and Euria receive text as PNG images.
+- Brave Leo and Euria receive one PNG image for each PDF page, including figures and scanned pages.
+- Duck.ai receives text as a PDF and keeps original PDF attachments unchanged.
 
 So the same paper reaches a chat that reads documents, one that reads pictures,
 and one that reads only text.
 
 Three buttons sit under the list:
 
-- Attach files attaches the checked files now, so the site uploads them early.
-  They do not go out a second time with your next message.
+- Prepare drag files creates temporary copies of the selected files. The button then becomes “Drag files into chat”.
 - Edit context shows the context text in a box, to read and change it. Your
   changes go in front of your next message. Press the button again to hide the
   box.
 - Copy context puts the same text on the clipboard.
 
-When you press the page's send button, or Enter in its message box, the plugin
-stops that send, attaches the checked files, waits for the upload, and sends your
-message. The files travel once for each choice of papers and boxes. Pick another
+To upload with a real drag action, click “Prepare drag files”.
+After the button changes, drag “Drag files into chat” onto the chat composer.
+If the chat does not accept dropped files, use automatic attachment when you send.
+A handled drop prevents automatic attachment of the same files on the next send.
+A canceled drag keeps automatic attachment available.
+
+Temporary copies expire after ten minutes or when the selected context changes.
+If you change the paper or service, prepare the files again.
+Each PDF page image retains the page layout on a white background.
+PDF images use approximately 144 DPI, with a maximum side length of 2400 pixels.
+If the images from one PDF exceed 128 MB, conversion fails with an error instead of omitting pages.
+
+When you press Send or Enter in the chat, the plugin stops the first send.
+The plugin attaches the selected files and waits for the upload.
+Then the plugin sends your message. The files travel once for each choice of papers and boxes. Pick another
 paper, or change a box, and the next message carries the new files.
 
 ## Browser controls

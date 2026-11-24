@@ -18,10 +18,7 @@
  *                                create or unlock the input only when it opens
  *   fileSelectors      string[]  input[type=file] elements
  *   acceptsDocuments   boolean   whether the composer accepts a non-image file
- *   pdfText            "pdf" | "image" | false
- *                                what a PDF's text is sent as, for a page that
- *                                takes no PDFs: a PDF of the text, or a picture of
- *                                it. false leaves the PDF out.
+ *   fileMode           "images" | "pdf" | null, conversions before upload/drag
  *   badges             string[]  which marks the service earns, from the lists in
  *                                the readme: "eco" (climate-aware energy) and
  *                                "privacy" (privacy-respecting policy). Every
@@ -44,6 +41,7 @@
 const README_MARKS = {
   euria: ["eco", "privacy"],
   ecosia: ["eco", "privacy"],
+  mistral: ["eco"],
   lumo: ["privacy"],
   duckai: ["privacy"],
   brave: ["privacy"],
@@ -172,6 +170,31 @@ export const DEFAULT_PROVIDERS = [
     ],
     acceptsDocuments: true,
   },
+  {
+    id: "mistral",
+    label: "Mistral Le Chat",
+    url: "https://chat.mistral.ai/chat",
+    composerSelectors: [
+      "div.ProseMirror[contenteditable='true']",
+      "div[contenteditable='true']",
+      "textarea",
+    ],
+    attachSelectors: [
+      "button[aria-label*='Attach' i]",
+      "button[aria-label*='Upload' i]",
+    ],
+    sendSelectors: [
+      "button[type='submit']",
+      "button[aria-label*='Send']",
+    ],
+    sendMode: "button-then-enter",
+    fileSelectors: [
+      "input[type='file'][accept*='pdf']",
+      "input[type='file'][multiple]",
+      "input[type='file']",
+    ],
+    acceptsDocuments: true,
+  },
   // The five services below were measured on their live pages, signed out. The
   // selectors come from `Zotero.SideBrowser.probe()` output.
   generic({
@@ -195,6 +218,7 @@ export const DEFAULT_PROVIDERS = [
   }),
   generic({
     id: "euria",
+    fileMode: "images",
     label: "Euria",
     url: "https://euria.infomaniak.com/",
     composerSelectors: ["textarea[aria-label='Ask Euria']", "textarea"],
@@ -203,7 +227,7 @@ export const DEFAULT_PROVIDERS = [
       "button[aria-label*='Attach' i]",
     ],
     sendSelectors: ["button[aria-label='Send']", "button[type='submit']"],
-    notes: "The page takes pictures only, so the text is sent as a picture.",
+    notes: "Text becomes a PNG. Each PDF page becomes a separate PNG.",
   }),
   generic({
     id: "ecosia",
@@ -236,6 +260,7 @@ export const DEFAULT_PROVIDERS = [
   }),
   generic({
     id: "duckai",
+    fileMode: "pdf",
     label: "Duck.ai",
     url: "https://duck.ai/",
     composerSelectors: ["textarea[name='user-prompt']", "textarea[placeholder^='Ask']", "textarea"],
@@ -249,6 +274,7 @@ export const DEFAULT_PROVIDERS = [
   }),
   generic({
     id: "brave",
+    fileMode: "images",
     label: "Brave Leo",
     url: "https://search.brave.com/ask",
     composerSelectors: ["#tap-input-field", "textarea[placeholder^='Ask']"],
@@ -258,7 +284,7 @@ export const DEFAULT_PROVIDERS = [
     ],
     sendSelectors: ["button.tap-input-primary-button", "button[aria-label='Ask']"],
     fileSelectors: ["input.tap-image-input", "input[type='file']"],
-    notes: "The page takes pictures only, so the text is sent as a picture.",
+    notes: "Text becomes a PNG. Each PDF page becomes a separate PNG.",
   }),
   generic({
     id: "venice",

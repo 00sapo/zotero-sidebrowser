@@ -68,6 +68,7 @@ function registerActor() {
           // would already have read and cleared the message box.
           click: { capture: true },
           keydown: { capture: true },
+          drop: { capture: true },
         },
       },
       parent: {

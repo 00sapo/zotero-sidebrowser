@@ -27,6 +27,7 @@ import { KINDS, buildPackage, contextText, describeOptions } from "./package.mjs
 import { DEFAULT_PROVIDERS, applyBadges, findProvider, loadCustomProviders } from "./providers/registry.mjs";
 import { getPref, setPref } from "./prefs.mjs";
 import * as multi from "./multi.mjs";
+import { preparePackage, writeDragFiles, setDragData, removeDragFiles } from "./file-transfer.mjs";
 
 const PLUGIN_ID = "sidebrowser@00sapo.dev";
 const PANE_ID = "sidebrowser-pane";
@@ -335,6 +336,14 @@ function createPaneApi(pane) {
   let actorWatch = null;
   let fitObserver = null;
   let fitTarget = null;
+  let dragFiles = null;
+  let dragKey = "";
+  let dragPreparing = false;
+  let dragGeneration = 0;
+  let dragging = false;
+  let dragStopped = false;
+  const retiredDragFiles = new Set();
+  let dragExpiry = null;
 
   let api = {
     get pane() {
@@ -359,6 +368,12 @@ function createPaneApi(pane) {
 
     /** Release every listener and the browser. */
     stop() {
+      dragStopped = true;
+      invalidateDrag();
+      for (const files of retiredDragFiles) {
+        removeDragFiles(files).catch((e) => Zotero.debug(`[Side Browser] ${e}`));
+      }
+      retiredDragFiles.clear();
       for (let { target, type, handler, capture } of listeners) {
         try {
           target.removeEventListener(type, handler, capture);
@@ -419,6 +434,8 @@ function createPaneApi(pane) {
     /** The key that names the package for the current papers and options. */
     packageKey,
 
+    prepareDrag: prepareDragFiles,
+
     selectProvider(id) {
       setPref("provider", id);
       pane.providerID = id;
@@ -440,7 +457,7 @@ function createPaneApi(pane) {
      * @returns {Promise<{files: object[], skipped: object[]}>}
      */
     async packageForPage() {
-      let built = await buildPackage(packageInput());
+      let built = await filesForProvider();
       return { ...built, text: pane.editedText || "" };
     },
 
@@ -860,6 +877,7 @@ function createPaneApi(pane) {
     if (!url) {
       return;
     }
+    invalidateDrag();
     pane.pageLoaded = false;
     showOverlay("Loading the AI page...");
     try {
@@ -978,8 +996,8 @@ function createPaneApi(pane) {
       return "";
     }
     let ids = pane.scope.items.map((item) => item.id).join(",");
-    let selection = pane.selection?.text ? `${pane.selection.text.length}:${pane.selection.text.slice(0, 24)}` : "";
-    let edited = pane.editedText ? `|edited:${pane.editedText.length}` : "";
+    let selection = pane.selection?.text ? pane.selection.text : "";
+    let edited = pane.editedText ? `|edited:${pane.editedText}` : "";
     return `${ids}|${kinds.join("+")}|${selection}${edited}`;
   }
 
@@ -994,6 +1012,9 @@ function createPaneApi(pane) {
   }
 
   async function syncPackage() {
+    if (dragKey && dragKey !== currentDragKey()) {
+      invalidateDrag();
+    }
     let actor = getActor();
     if (!actor) {
       return false;
@@ -1107,6 +1128,10 @@ function createPaneApi(pane) {
   }
 
   async function refreshScope() {
+    // Item metadata or annotations can change while the selected IDs stay equal.
+    if (dragFiles || dragPreparing) {
+      invalidateDrag();
+    }
     let before = pane.scope.items.map((item) => item.id).join(",");
     pane.scope = await buildScope({ doc });
     let after = pane.scope.items.map((item) => item.id).join(",");
@@ -1127,6 +1152,10 @@ function createPaneApi(pane) {
     if (!root.isConnected) {
       return;
     }
+    if (dragKey && dragKey !== currentDragKey()) {
+      invalidateDrag();
+    }
+    updateDragButton();
     let items = pane.scope.items;
     let hasItems = items.length > 0;
     let hasSelection = !!pane.selection?.text;
@@ -1152,9 +1181,7 @@ function createPaneApi(pane) {
         : "Selected text";
     }
 
-    let anyFile = activeKinds().length > 0;
     let anyText = activeKinds().some((kind) => TEXT_KINDS.includes(kind) || kind === "annotations");
-    setDisabled("attach", !anyFile);
     setDisabled("edit", !anyText);
     setDisabled("copy", !anyText);
     let edit = root.querySelector('button[data-action="edit"]');
@@ -1179,50 +1206,129 @@ function createPaneApi(pane) {
         return;
       }
       let action = button.dataset.action;
-      if (action === "attach") {
-        onAttach();
+      if (action === "drag") {
+        if (!dragFiles) {
+          prepareDragFiles();
+        }
+
       } else if (action === "edit") {
         onEdit();
       } else if (action === "copy") {
         onCopy();
       }
     });
-  }
-
-  /** Attach the checked files to the page now, and keep them from going twice. */
-  async function onAttach() {
-    if (!activeKinds().length) {
-      showError("Check at least one option to attach.");
-      return;
-    }
-    setDisabled("attach", true);
-    try {
-      let built = await buildPackage(packageInput());
-      let actor = await waitForActor();
-      if (!actor) {
-        showError("The page is not ready yet. Wait for it to load.");
+    const button = root.querySelector('button[data-action="drag"]');
+    on(button, "dragstart", (event) => {
+      if (!dragFiles || dragKey !== currentDragKey()) {
+        event.preventDefault();
+        invalidateDrag();
         return;
       }
-      let problems = [];
-      if (built.files.length) {
-        let result = await actor.sendQuery("attach", { files: built.files, key: packageKey() });
-        for (let miss of result?.attachErrors || []) {
-          problems.push(`Could not attach ${miss.name}: ${miss.error}`);
-        }
+      try {
+        setDragData(event.dataTransfer, dragFiles.paths);
+        event.dataTransfer.mozSetDataAt("application/x-sidebrowser-package", packageKey(), 0);
+        dragging = true;
+      } catch (error) {
+        event.preventDefault();
+        showError(`File dragging failed: ${error.message || error}`);
       }
-      for (let miss of built.skipped) {
-        problems.push(`Skipped ${truncate(miss.title || "", 40)}: ${miss.reason}`);
+    });
+    on(button, "dragend", (event) => {
+      if (event.dataTransfer?.dropEffect !== "none") {
+        invalidateDrag();
       }
-      if (!built.files.length && !problems.length) {
-        problems.push("There was nothing to attach.");
+      dragging = false;
+      // A target can read a dropped file after dragend. Keep retired files for
+      // five minutes, and remove all remaining copies when this pane closes.
+      for (const files of retiredDragFiles) {
+        win.setTimeout(() => {
+          retiredDragFiles.delete(files);
+          removeDragFiles(files).catch((e) => Zotero.debug(`[Side Browser] ${e}`));
+        }, 5 * 60 * 1000);
       }
-      if (problems.length) {
-        showError(problems.join("\n"));
+    });
+  }
+
+  async function filesForProvider() {
+    return preparePackage(await buildPackage(packageInput()), pane.provider.fileMode, doc);
+  }
+
+  function currentDragKey() {
+    return `${pane.providerID}|${pane.provider.fileMode || ""}|${packageKey()}`;
+  }
+
+  function updateDragButton() {
+    const button = root.querySelector('button[data-action="drag"]');
+    button.disabled = dragPreparing || !activeKinds().length;
+    button.draggable = !!dragFiles;
+    button.textContent = dragPreparing ? "Preparing files..."
+      : dragFiles ? "Drag files into chat" : "Prepare drag files";
+    button.title = dragFiles ? "Drag these files onto the chat composer"
+      : "Prepare the selected files, then drag them into the chat";
+  }
+
+  function invalidateDrag() {
+    dragGeneration++;
+    dragKey = "";
+    if (dragExpiry) {
+      win.clearTimeout(dragExpiry);
+      dragExpiry = null;
+    }
+    if (dragFiles) {
+      if (dragging) {
+        retiredDragFiles.add(dragFiles);
+      } else {
+        removeDragFiles(dragFiles).catch((e) => Zotero.debug(`[Side Browser] ${e}`));
       }
-    } catch (e) {
-      showError(String(e.message || e));
+      dragFiles = null;
+    }
+    updateDragButton();
+  }
+
+  async function prepareDragFiles() {
+    if (dragPreparing || !activeKinds().length) {
+      return null;
+    }
+    if (dragFiles && dragKey === currentDragKey()) {
+      return { paths: [...dragFiles.paths], key: dragKey };
+    }
+    invalidateDrag();
+    const generation = ++dragGeneration;
+    const key = currentDragKey();
+    dragKey = key;
+    dragPreparing = true;
+    updateDragButton();
+    let written = null;
+    try {
+      const built = await filesForProvider();
+      const skipped = built.skipped.filter((f) => f.reason !== "none");
+      if (skipped.length) {
+        throw new Error(skipped.map((f) => `${f.title}: ${f.reason}`).join("\n"));
+      }
+      if (!built.files.length) {
+        throw new Error("There were no files to prepare.");
+      }
+      written = await writeDragFiles(built.files);
+      if (dragStopped || generation !== dragGeneration || key !== currentDragKey()) {
+        await removeDragFiles(written);
+        return null;
+      }
+      dragFiles = written;
+      dragExpiry = win.setTimeout(invalidateDrag, 10 * 60 * 1000);
+      return { paths: [...written.paths], key };
+    } catch (error) {
+      if (written) {
+        await removeDragFiles(written);
+      }
+      if (!dragStopped) {
+        showError(`File preparation failed: ${error.message || error}`);
+      }
+      return null;
     } finally {
-      render();
+      dragPreparing = false;
+      if (!dragStopped) {
+        updateDragButton();
+      }
     }
   }
 

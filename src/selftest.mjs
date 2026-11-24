@@ -239,13 +239,45 @@ async function runSendTest(api, testURL, record) {
   record("send: the metadata file arrives", names.includes("paper-metadata.md"), { value: names });
   record("send: the PDF file arrives", names.some((name) => name.endsWith(".pdf")), { value: names });
 
+  const prepared = await api.prepareDrag();
+  const dragButton = pane.root.querySelector('button[data-action="drag"]');
+  record("drag: preparation enables native dragging", !!prepared?.paths.length && dragButton.draggable);
+  const transfer = Zotero.SideBrowser.loadModule("src/file-transfer.mjs");
+  if (prepared) {
+    // Native dragstart supplies a writable transfer. A constructed DataTransfer
+    // outside that event does not permit multiple native items in Gecko.
+    const entries = [];
+    transfer.setDragData({ mozSetDataAt: (...args) => entries.push(args) }, prepared.paths);
+    record("drag: native data includes every file", entries.length === prepared.paths.length
+      && entries[0][0] === "application/x-moz-file" && entries[0][1].path === prepared.paths[0]);
+    const original = await IOUtils.read(prepared.paths.find((p) => p.endsWith(".pdf")));
+    record("drag: PDF copy preserves its bytes", original.length > 100 && String.fromCharCode(...original.slice(0, 5)) === "%PDF-");
+    const dragEnd = new pane.doc.defaultView.DragEvent("dragend", {
+      dataTransfer: new pane.doc.defaultView.DataTransfer(),
+    });
+    dragButton.dispatchEvent(dragEnd);
+    record("drag: canceled drag keeps prepared files", dragButton.draggable
+      && await IOUtils.exists(prepared.paths[0]));
+    pane.options.pdf = false;
+    api.render();
+    await Zotero.Promise.delay(200);
+    record("drag: changing the selection clears stale files", !dragButton.draggable
+      && !(await IOUtils.exists(prepared.paths[0])));
+  }
+
+  // An optional native-pointer test is driven by xdotool in the test harness.
+  if (Zotero.Prefs.get("sidebrowser.testNativeDrag")) {
+    await testNativeDrag(api, record);
+  }
+
   // A page that takes pictures only gets the metadata as a picture.
   api.navigate(`${testURL}?images=1`);
   await waitForPane(api, `${testURL}?images=1`);
   await Zotero.Promise.delay(1200);
   await api.sync();
   pane.options.metadata = true;
-  pane.options.pdf = false;
+  pane.options.pdf = true;
+  pane.provider.fileMode = "images";
   pane.editedText = null;
   api.render();
   await api.syncPackage();
@@ -254,10 +286,12 @@ async function runSendTest(api, testURL, record) {
   // A new page counts from zero, so this is its first message.
   let images = await waitForMessages(pane, 1);
   let imageFiles = (images?.received?.[0] || {}).files || [];
-  record("images: the metadata travels as a picture", imageFiles.length === 1
-    && imageFiles[0].type === "image/png" && imageFiles[0].size > 800, { value: imageFiles });
+  record("images: the metadata travels as a picture", imageFiles.length === 2
+    && imageFiles.every((f) => f.type === "image/png" && f.size > 800), { value: imageFiles });
 
   // A page that takes PDFs only gets the picture as a PDF.
+  pane.provider.fileMode = "pdf";
+  pane.options.pdf = false;
   api.navigate(`${testURL}?pdfonly=1`);
   await waitForPane(api, `${testURL}?pdfonly=1`);
   await Zotero.Promise.delay(1200);
@@ -272,6 +306,7 @@ async function runSendTest(api, testURL, record) {
 
   // Back to the plain page, and send twice: the files go with the first message
   // only.
+  pane.provider.fileMode = null;
   api.navigate(testURL);
   await waitForPane(api, testURL);
   await Zotero.Promise.delay(1200);
@@ -289,6 +324,50 @@ async function runSendTest(api, testURL, record) {
   record("send: the next message has no files", (second?.messages || 0) === 2
     && ((second.received[1] || {}).files || []).length === 0, {
     value: (second?.received?.[1] || {}).files,
+  });
+}
+
+async function testNativeDrag(api, record) {
+  const pane = api.pane;
+  pane.options.pdf = true;
+  pane.provider.fileMode = "images";
+  api.render();
+  await api.syncPackage();
+  const prepared = await api.prepareDrag();
+  if (!prepared) {
+    record("drag: trusted pointer test prepared files", false);
+    return;
+  }
+  const button = pane.root.querySelector('button[data-action="drag"]');
+  button.scrollIntoView({ block: "nearest" });
+  await Zotero.Promise.delay(300);
+  const rect = button.getBoundingClientRect();
+  const browser = pane.browser.getBoundingClientRect();
+  const win = pane.doc.defaultView;
+  await IOUtils.writeUTF8("/tmp/sbtest/drag-ready.json", JSON.stringify({
+    source: [Math.round(win.mozInnerScreenX + rect.x + rect.width / 2),
+      Math.round(win.mozInnerScreenY + rect.y + rect.height / 2)],
+    target: [Math.round(win.mozInnerScreenX + browser.x + browser.width / 2),
+      Math.round(win.mozInnerScreenY + browser.y + 90)],
+  }));
+  let dropped;
+  for (let i = 0; i < 100; i++) {
+    dropped = await readMockState(pane);
+    if (dropped?.dropped?.length) {
+      break;
+    }
+    await Zotero.Promise.delay(250);
+  }
+  record("drag: trusted drop delivers native files", dropped?.dropped?.length === prepared.paths.length
+    && dropped.dropped.length === 2 && dropped.dropped.every((file) => file.type === "image/png"), {
+    value: dropped?.dropped,
+  });
+  record("drag: handled drop disarms duplicate attachments", dropped?.pending === false, { value: dropped?.pending });
+  await typeInPage(pane, "Message with manually dropped files.");
+  await clickSend(pane);
+  const message = await waitForMessages(pane, 2);
+  record("drag: manually dropped files travel once", message?.received?.[1]?.files?.length === prepared.paths.length, {
+    value: message?.received?.[1]?.files,
   });
 }
 
@@ -458,13 +537,37 @@ async function checkFill(record, pane) {
 function checkLayout(record, pane) {
   let root = pane.root;
   let buttons = Array.from(root.querySelectorAll(".sb-actions button")).map((b) => b.dataset.action);
-  record("layout: buttons in order", buttons.join(",") === "attach,edit,copy", { value: buttons });
+  record("layout: buttons in order", buttons.join(",") === "drag,edit,copy", { value: buttons });
+  record("layout: no attach button", !root.querySelector('button[data-action="attach"]'));
   record("layout: no pencil", !root.querySelector('button[data-action="composer"]'));
   record("layout: the edit box starts hidden", pane.ui.editor.hidden === true);
   record("layout: no status line", !root.querySelector(".sb-status"));
   record("layout: no list checkbox", !root.querySelector('[data-role="includeList"]'));
   let kinds = Array.from(root.querySelectorAll(".sb-send label[data-kind]")).map((l) => l.dataset.kind);
   record("layout: five send options", kinds.join(",") === "metadata,selection,annotations,pdf,others", { value: kinds });
+}
+
+/** A valid PDF with two image-only pages and no text content. */
+function imageOnlyPDF() {
+  const stream = "q 160 0 0 160 20 20 cm /Im1 Do Q";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 5 0 R /Resources << /XObject << /Im1 6 0 R >> >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 5 0 R /Resources << /XObject << /Im1 6 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 25 >>\nstream\nFF000000FF000000FFFFFFFF>\nendstream",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((body, index) => {
+    offsets.push(out.length);
+    out += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  out += offsets.slice(1).map((n) => `${String(n).padStart(10, "0")} 00000 n \n`).join("");
+  return out + `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
 }
 
 /** Build the five kinds of file for the sample paper and check each one. */
@@ -477,6 +580,43 @@ async function checkPackage(record, pane) {
     attachmentItem: null,
     options: { metadata: true, selection: true, annotations: true, pdf: true, others: true },
   });
+  let transfer = Zotero.SideBrowser.loadModule("src/file-transfer.mjs");
+  let imageBuilt = await transfer.preparePackage(built, "images", pane.doc);
+  record("conversion: PDF and text become PNG files", !imageBuilt.skipped.some((f) => f.reason !== "none")
+    && imageBuilt.files.length >= 3 && imageBuilt.files.every((f) => f.type === "image/png"), {
+    value: { files: imageBuilt.files.map((f) => ({ name: f.name, size: f.data?.length })), skipped: imageBuilt.skipped },
+  });
+  // Raster-only two-page PDF: no text layer exists to extract.
+  const fixture = await transfer.preparePackage({
+    files: [{ name: "scan.pdf", type: "application/pdf", data: imageOnlyPDF(), isPdf: true }], skipped: [],
+  }, "images", pane.doc);
+  record("conversion: every scanned PDF page becomes an image", fixture.skipped.length === 0
+    && fixture.files.length === 2
+    && fixture.files.every((f, index) => f.name === `scan-page-00${index + 1}.png`
+      && f.data.startsWith("\x89PNG")), {
+    value: { names: fixture.files.map((f) => f.name), skipped: fixture.skipped },
+  });
+  for (const file of fixture.files) {
+    await IOUtils.write(PathUtils.join(PathUtils.tempDir, file.name),
+      Uint8Array.from(file.data, (ch) => ch.charCodeAt(0)));
+  }
+  const malformed = await transfer.preparePackage({
+    files: [{ name: "broken.pdf", type: "application/pdf", isPdf: true, data: "not a PDF" }], skipped: [],
+  }, "images", pane.doc);
+  record("conversion: invalid PDF reports an error", malformed.files.length === 0 && malformed.skipped.length === 1);
+  const diskText = await transfer.preparePackage({ files: [
+    { name: "note.txt", type: "text/plain", data: "Text from disk" },
+    { name: "note.md", type: "text/markdown", text: "Another text" },
+  ], skipped: [] }, "images", pane.doc);
+  record("conversion: local text files become images with unique names", diskText.skipped.length === 0
+    && diskText.files.length === 2 && diskText.files.every((f) => f.type === "image/png")
+    && new Set(diskText.files.map((f) => f.name)).size === 2);
+  const policies = Zotero.SideBrowser.loadModule("src/providers/registry.mjs").DEFAULT_PROVIDERS;
+  record("conversion: Leo and Euria use page images", ["brave", "euria"].every((id) =>
+    policies.find((p) => p.id === id)?.fileMode === "images"));
+  record("conversion: Duck.ai uses PDFs for text", policies.find((p) => p.id === "duckai")?.fileMode === "pdf");
+  const plain = await transfer.preparePackage(built, null, pane.doc);
+  record("conversion: other providers keep the original PDF", plain === built);
   let names = built.files.map((f) => f.name);
   record("package: metadata file", names.includes("paper-metadata.md"), { value: names });
   record("package: selection file", names.includes("selected-text.md"));
@@ -626,7 +766,8 @@ function checkBadges(record, pane, section) {
     .filter((p) => !p.custom).every((p) => p.badges.includes("free")));
   record("badges: Euria is free, private, and eco", ["free", "privacy", "eco"]
     .every((mark) => marks("euria").includes(mark)), { value: marks("euria") });
-  record("providers: Mistral is absent", !section.getProviders().some((p) => p.id === "mistral"));
+  record("providers: Mistral is available", section.getProviders().some((p) => p.id === "mistral"));
+  record("badges: Mistral is free and eco", marks("mistral").join(",") === "free,eco", { value: marks("mistral") });
   record("badges: Lumo is free and private", marks("lumo").join(",") === "free,privacy", { value: marks("lumo") });
   record("badges: ChatGPT is free only", marks("chatgpt").join(",") === "free", { value: marks("chatgpt") });
 

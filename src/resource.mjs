@@ -7,6 +7,7 @@
  */
 
 export const RESOURCE_NAME = "sidebrowser-x";
+let chromeRegistration = null;
 
 /**
  * Point `resource://sidebrowser/` at the plugin root.
@@ -17,6 +18,11 @@ export function registerResourceSubstitution(pluginRootURI) {
   if (!pluginRootURI) {
     throw new Error("Missing plugin root URI");
   }
+  chromeRegistration = Cc["@mozilla.org/addons/addon-manager-startup;1"]
+    .getService(Ci.amIAddonManagerStartup).registerChrome(
+      Services.io.newURI(`${pluginRootURI}manifest.json`),
+      [["content", "sidebrowser-renderer", `${pluginRootURI}content/`]],
+    );
   let handler = Services.io
     .getProtocolHandler("resource")
     .QueryInterface(Ci.nsIResProtocolHandler);
@@ -27,6 +33,8 @@ export function registerResourceSubstitution(pluginRootURI) {
 }
 
 export function unregisterResourceSubstitution() {
+  chromeRegistration?.destruct();
+  chromeRegistration = null;
   try {
     let handler = Services.io
       .getProtocolHandler("resource")

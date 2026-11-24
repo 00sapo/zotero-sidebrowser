@@ -295,6 +295,10 @@ export const PaneCSS = `
   cursor: pointer;
 }
 
+.sb-root .sb-actions button[draggable="true"] {
+  cursor: grab;
+}
+
 .sb-root .sb-editor {
   display: flex;
   flex-direction: column;
@@ -423,7 +427,7 @@ export function paneMarkup() {
 </html:div>
 
 <html:div class="sb-actions">
-  <html:button type="button" data-action="attach" title="Attach the checked files to the page now">Attach files</html:button>
+  <html:button type="button" data-action="drag" draggable="false" title="Prepare the selected files, then drag them into the chat">Prepare drag files</html:button>
   <html:button type="button" class="sb-primary" data-action="edit" title="Show the context text, to read and change it">Edit context</html:button>
   <html:button type="button" data-action="copy" title="Copy the checked text to the clipboard">Copy context</html:button>
 </html:div>

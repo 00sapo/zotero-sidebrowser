@@ -258,7 +258,7 @@ export async function buildPackage({ items, selection, attachmentItem, options, 
       try {
         let read = await readFileFromDisk(image.path, uniqueName(image.name, used), "image/png");
         if (!read.tooBig) {
-          files.push({ ...read, ...extra });
+          files.push(read);
         }
       } catch (e) {
         Zotero.debug(`[Side Browser] Could not read an annotation picture: ${e}`);
