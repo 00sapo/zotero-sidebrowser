@@ -48,8 +48,8 @@ paying the Big Techs.
   account for, and the site's own limits apply.
 - One pane in Zotero's right column, with its own icon in the strip next to Info,
   Abstract, and Tags. It follows the light and dark theme.
-- Twelve services ready to use: ChatGPT, Claude, DeepSeek, Mistral Le Chat,
-  Gemini, Perplexity, Euria, Ecosia AI, Lumo, Duck.ai, Brave Leo, and Venice, plus
+- Eleven services ready to use: ChatGPT, Claude, DeepSeek, Mistral Le Chat,
+  Gemini, Euria, Ecosia AI, Lumo, Duck.ai, Brave Leo, and Venice, plus
   any other chat page through a custom URL.
 - Your papers go with your message. You type in the chat page as usual, and the
   plugin attaches the files when you press send.

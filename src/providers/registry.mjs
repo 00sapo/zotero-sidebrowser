@@ -49,7 +49,6 @@ const README_MARKS = {
   deepseek: [],
   claude: [],
   gemini: [],
-  perplexity: [],
 };
 
 /**
@@ -215,21 +214,6 @@ export const DEFAULT_PROVIDERS = [
     // Gemini creates its file input only when the upload menu opens, so files
     // arrive by paste.
     notes: "Files are pasted into the message box.",
-  }),
-  generic({
-    id: "perplexity",
-    label: "Perplexity",
-    url: "https://www.perplexity.ai/",
-    composerSelectors: [
-      "div[role='textbox'][contenteditable='true']",
-      "#ask-input",
-      "div[contenteditable='true'][aria-label^='Ask']",
-    ],
-    attachSelectors: [
-      "button[aria-label*='Add files' i]",
-      "button[aria-label*='Attach' i]",
-    ],
-    sendSelectors: ["button[aria-label='Submit']", "button[type='submit']"],
   }),
   generic({
     id: "euria",
