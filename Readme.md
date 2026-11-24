@@ -1,5 +1,10 @@
 # Side Browser
 
+<p align="center">
+  <img src="docs/screenshot-light.png" alt="The AI sidebar in the light theme, with ChatGPT open" width="380">
+  <img src="docs/screenshot-dark.png" alt="The AI sidebar in the dark theme, with Mistral open" width="380">
+</p>
+
 Existing AI chatting addons for Zotero reequire an API key or a subscription. Not this.
 
 With this addon, you can use any web chat, perfectly integrated with zotero items, metadata,
