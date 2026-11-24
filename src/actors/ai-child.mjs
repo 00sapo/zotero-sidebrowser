@@ -4,71 +4,39 @@
  * This is the only file that runs inside the chat page. Zotero uses Fission, so
  * a `<browser>` gets its own content process and chrome code cannot touch the
  * page DOM. The parent side sends messages here and this actor does the page
- * work: keep the context block, insert text, attach files, and catch the send
- * action before the site handles it.
+ * work: attach files, insert text, and take over the send action.
+ *
+ * Send takeover: when the user clicks the page's send button, or presses Enter in
+ * its message box, and the pane has files waiting, this actor stops that event,
+ * asks the parent for the files, attaches them, waits for the upload, and then
+ * sends the message itself. Files go out once for each package. A new package key
+ * (another paper, other check boxes) arms the next message again.
  *
  * Sandbox note: inside a JSWindowActorChild there is no `setTimeout`, `File`,
  * `DataTransfer`, `Event`, or `InputEvent` in scope. Take every one of them from
- * `this.contentWindow`.
+ * `this.contentWindow`. `Zotero` and `dump` print nothing here, so use `_log`.
  */
 
-/**
- * Input types that count as "typing a message". Catching Enter on a search box
- * or a rename field would be wrong, so only these are watched.
- */
-const MESSAGE_INPUT_TYPES = new Set(["insertText", "insertLineBreak", "insertParagraph"]);
+/** How long to wait for a site to finish an upload before sending anyway. */
+const UPLOAD_WAIT_MS = 12000;
+const UPLOAD_MIN_WAIT_MS = 1500;
 
 export class SideBrowserChild extends JSWindowActorChild {
   /** @type {object|null} */
   _adapter = null;
 
-  /** The context block for the next message. @type {string} */
-  _context = "";
+  /** Key of the package the pane wants sent, or "" for none. */
+  _pkgKey = "";
 
-  /** Context block that was just injected, to recognise it coming back. */
-  _injected = "";
+  /** Key of the package that already went out with a message. */
+  _sentKey = "";
 
-  /** Files waiting to be attached on the next send. @type {object[]} */
-  _pendingFiles = [];
-
-  /** Set while the actor is inserting text, so it does not catch itself. */
+  /** Set while the actor acts on the page, so it does not catch itself. */
   _busy = false;
 
-  /** True once the current context went out with a message. */
-  _contextSent = false;
-
-  /** Last message sent, so a double intercept cannot duplicate it. */
-  _lastSent = null;
-
   didDestroy() {
-    this._context = "";
-    this._pendingFiles = [];
+    this._pkgKey = "";
     this._busy = false;
-  }
-
-  /**
-   * The capture listeners registered in `core.mjs` land here.
-   *
-   * The `click` and `keydown` cases are the send intercept. They run in the
-   * system event group, so they see the event before the site's own handlers.
-   */
-  handleEvent(event) {
-    if (this._busy) {
-      return;
-    }
-    switch (event.type) {
-      case "click":
-        this._onClick(event);
-        break;
-      case "keydown":
-        this._onKeyDown(event);
-        break;
-      case "input":
-        this._onInput(event);
-        break;
-      default:
-        break;
-    }
   }
 
   /** Forward a debug line to the parent, which can reach Zotero.debug. */
@@ -80,41 +48,44 @@ export class SideBrowserChild extends JSWindowActorChild {
     }
   }
 
+  /**
+   * The capture listeners registered in `core.mjs` land here. A plain capture
+   * listener runs before the page's own handlers, which is what the takeover
+   * needs. A system-group listener would run after them.
+   */
+  handleEvent(event) {
+    if (this._busy) {
+      return;
+    }
+    if (event.type === "click") {
+      this._onClick(event);
+    } else if (event.type === "keydown") {
+      this._onKeyDown(event);
+    }
+  }
+
   receiveMessage({ name, data }) {
     switch (name) {
       case "set-adapter":
         this._adapter = data.adapter;
         return { ok: true };
-      case "set-context": {
-        let next = String(data.context || "");
-        // The same text again keeps its "already sent" state. A new paper
-        // resets it, so the next message carries the new context.
-        if (next !== this._context) {
-          this._contextSent = false;
-        }
-        this._context = next;
-        return { ok: true, length: this._context.length };
+      case "set-package": {
+        let key = String(data.key || "");
+        this._pkgKey = key;
+        return { ok: true, pending: this._pending() };
       }
-      case "set-context-old":
-        this._context = String(data.context || "");
-        return { ok: true, length: this._context.length };
-      case "set-files":
-        this._pendingFiles = Array.isArray(data.files) ? data.files : [];
-        return { ok: true, count: this._pendingFiles.length };
       case "insert":
         return this._insertOnly(data.text);
       case "attach":
-        return this._attachOnly(data.files || []);
+        return this._attachOnly(data.files || [], data.key);
       case "compose":
         return this._compose(data);
       case "prepare":
         return this._prepare();
-      case "get-context":
-        return { ok: true, context: this._context };
-      case "click-send":
-        return this._clickSendForTest();
       case "read-mock-state":
         return this._readMockState();
+      case "click-send":
+        return this._clickSendForTest();
       case "select-all-text":
         return this._selectAllText();
       default:
@@ -123,27 +94,26 @@ export class SideBrowserChild extends JSWindowActorChild {
   }
 
   // -------------------------------------------------------------------------
-  // Send intercept
+  // Events
   // -------------------------------------------------------------------------
 
-  /**
-   * A click on a send control. The message is put in the composer first, and if
-   * that works the site sees a composer that is already full.
-   *
-   * A click on a link is forwarded to the parent, which decides whether the
-   * link stays in the pane or goes to the system browser.
-   */
+  _pending() {
+    return !!this._pkgKey && this._pkgKey !== this._sentKey;
+  }
+
   _onClick(event) {
-    if (event.button !== 0 || !event.target) {
-      return;
-    }
-    let sendControl = event.target.closest ? event.target.closest(this._sendSelector()) : null;
-    if (sendControl && this._isUsable(sendControl)) {
-      this._prepareSend();
+    if (event.button !== 0 || !event.target?.closest) {
       return;
     }
 
-    let anchor = event.target.closest ? event.target.closest("a[href]") : null;
+    let selector = this._sendSelector();
+    let control = selector ? event.target.closest(selector) : null;
+    if (control && this._pending() && this._isUsable(control) && this._hasComposerText()) {
+      this._takeOver(event);
+      return;
+    }
+
+    let anchor = event.target.closest("a[href]");
     if (!anchor) {
       return;
     }
@@ -151,6 +121,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     if (!href || !/^https?:/i.test(href)) {
       return;
     }
+    // A click with a modifier belongs to the page or to the system browser.
     if (event.ctrlKey || event.metaKey || event.altKey) {
       return;
     }
@@ -167,6 +138,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     if (sameDocument && href.includes("#")) {
       return;
     }
+    // The parent decides whether the link stays in the pane.
     this.sendAsyncMessage("link-click", {
       href,
       shiftKey: event.shiftKey,
@@ -174,120 +146,90 @@ export class SideBrowserChild extends JSWindowActorChild {
     });
   }
 
-  /**
-   * Enter in the message box is a send on most sites. The site's own handler
-   * runs in the default group, so preparing here means it sees full content.
-   */
   _onKeyDown(event) {
-    if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) {
+    if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    if (event.isComposing || !this._pending()) {
       return;
     }
     let composer = this._findComposer();
-    if (!composer || !composer.contains(event.target)) {
+    if (!composer || !composer.contains(event.target) || !this._composerText(composer).trim()) {
       return;
     }
-    if (event.isComposing) {
-      return;
-    }
-    this._prepareSend();
-  }
-
-  /** Remember what the actor itself typed, so it is not counted as user text. */
-  _onInput(event) {
-    if (!MESSAGE_INPUT_TYPES.has(event.inputType)) {
-      return;
-    }
-    if (!this._context) {
-      return;
-    }
-    let composer = this._findComposer();
-    if (composer && composer.contains(event.target)) {
-      this._lastUserInput = event.timeStamp;
-    }
+    this._takeOver(event);
   }
 
   /**
-   * Fill the composer with the context block plus whatever the user already
-   * typed in the page, and handle the PDF that is waiting.
+   * Stop the send, attach the files, and send again. Stopping the event first is
+   * what gives the upload time to finish: the site never sees the first send.
    */
-  async _prepareSend() {
+  _takeOver(event) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this._sendWithPackage();
+  }
+
+  async _sendWithPackage() {
     if (this._busy) {
       return;
     }
     this._busy = true;
+    let key = this._pkgKey;
+    let report = { key, attached: [], errors: [], skipped: [], sent: false };
     try {
-      let composer = this._findComposer();
-      if (!composer) {
-        return;
+      let pkg = null;
+      try {
+        pkg = await this.sendQuery("get-package", { key });
+      } catch (e) {
+        report.error = `Could not read the files: ${e}`;
       }
-      let userText = this._composerText(composer);
-      let text = this._withContext(userText);
-      if (!text) {
-        return;
+      let files = pkg?.files || [];
+      report.skipped = pkg?.skipped || [];
+      if (files.length) {
+        let outcome = await this._attachFiles(files);
+        report.attached = outcome.attached;
+        report.errors = outcome.attachErrors;
+        if (outcome.attached.length) {
+          await this._waitForUpload();
+        }
       }
-      this._insertText(composer, text);
-      if (this._pendingFiles.length) {
-        await this._attachFiles(this._pendingFiles);
-        this._pendingFiles = [];
-      }
-      await this._delay(60);
+      // Mark before sending, so a second click cannot attach the same files.
+      this._sentKey = key;
+      report.sent = await this._send();
     } catch (e) {
-      this._log(`could not prepare the message: ${e}`);
+      report.error = String(e);
     } finally {
       this._busy = false;
     }
+    this.sendAsyncMessage("package-sent", report);
   }
 
   /**
-   * The context block, followed by the user's own words. A composer that
-   * already holds the block is left alone, so this is safe to run twice.
-   *
-   * @param {string} userText
-   * @returns {string}
+   * Sites disable the send button while a file uploads. Wait for it to come
+   * back, with a limit so a stuck upload does not block the message.
    */
-  _withContext(userText) {
-    let context = this._context.trim();
-    let text = (userText || "").trim();
-    if (!context || this._contextSent) {
-      return text;
+  async _waitForUpload() {
+    await this._delay(UPLOAD_MIN_WAIT_MS);
+    let mode = this._adapter?.sendMode || "button-then-enter";
+    if (mode === "enter") {
+      await this._delay(1500);
+      return;
     }
-    if (text.startsWith(context) || this._alreadyHasContext(text)) {
-      return text;
+    let selectors = this._adapter?.sendSelectors || [];
+    let waited = UPLOAD_MIN_WAIT_MS;
+    while (waited < UPLOAD_WAIT_MS) {
+      if (this._findSendButton(selectors)) {
+        return;
+      }
+      await this._delay(400);
+      waited += 400;
     }
-    this._injected = context;
-    this._contextSent = true;
-    return text ? `${context}\n\n${text}` : context;
-  }
-
-  _alreadyHasContext(text) {
-    if (!text || text.length < 40) {
-      return false;
-    }
-    // A prefix match on the first line is enough: the block always starts with
-    // the same sentence, so a message that already carries it is not doubled.
-    let firstLine = text.split("\n")[0].slice(0, 60);
-    let contextFirstLine = this._context.trim().split("\n")[0].slice(0, 60);
-    return !!firstLine && firstLine === contextFirstLine;
-  }
-
-  _hasComposerText() {
-    let composer = this._findComposer();
-    return !!composer && !!this._composerText(composer).trim();
-  }
-
-  _composerText(composer) {
-    if (!composer) {
-      return "";
-    }
-    if (composer.localName === "textarea" || composer.localName === "input") {
-      return composer.value || "";
-    }
-    return composer.innerText || composer.textContent || "";
   }
 
   _sendSelector() {
     let selectors = this._adapter?.sendSelectors || [];
-    return selectors.length ? selectors.join(",") : "[data-sidebrowser-no-send-control]";
+    return selectors.length ? selectors.join(",") : "";
   }
 
   // -------------------------------------------------------------------------
@@ -296,13 +238,12 @@ export class SideBrowserChild extends JSWindowActorChild {
 
   _prepare() {
     let doc = this.document;
-    let composer = this._findComposer();
     return {
       url: this.contentWindow.location.href,
       title: doc.title,
       readyState: doc.readyState,
-      hasComposer: !!composer,
-      fileInputs: this._findFileInputs().map((el) => ({
+      hasComposer: !!this._findComposer(),
+      fileInputs: this._allFileInputs().map((el) => ({
         accept: el.getAttribute("accept") || "",
         multiple: el.hasAttribute("multiple"),
       })),
@@ -316,7 +257,7 @@ export class SideBrowserChild extends JSWindowActorChild {
   async _insertOnly(text) {
     let composer = this._findComposer();
     if (!composer) {
-      return { ok: false, stage: "composer", error: "No composer found on the page" };
+      return { ok: false, stage: "composer", error: "No message box found on the page" };
     }
     this._busy = true;
     try {
@@ -329,17 +270,17 @@ export class SideBrowserChild extends JSWindowActorChild {
     }
   }
 
-  async _compose({ text, files = [], send = true, submitOnly = false }) {
+  /** Test and console path: attach files, insert text, and send in one call. */
+  async _compose({ text, files = [], send = true }) {
     let doc = this.document;
     if (doc.readyState !== "complete") {
       await new Promise((resolve) => {
         this.contentWindow.addEventListener("load", resolve, { once: true });
       });
     }
-
     let composer = this._findComposer();
     if (!composer) {
-      return { ok: false, stage: "composer", error: "No composer found on the page" };
+      return { ok: false, stage: "composer", error: "No message box found on the page" };
     }
 
     this._busy = true;
@@ -351,17 +292,15 @@ export class SideBrowserChild extends JSWindowActorChild {
         attached = outcome.attached;
         attachErrors = outcome.attachErrors;
         if (attached.length) {
-          await this._delay(1500);
+          await this._waitForUpload();
         }
       }
-      if (!submitOnly) {
-        try {
-          this._insertText(composer, String(text || ""));
-        } catch (e) {
-          return { ok: false, stage: "insert", error: String(e), attached, attachErrors };
-        }
-        await this._delay(250);
+      try {
+        this._insertText(composer, String(text || ""));
+      } catch (e) {
+        return { ok: false, stage: "insert", error: String(e), attached, attachErrors };
       }
+      await this._delay(250);
     } finally {
       this._busy = false;
     }
@@ -436,46 +375,104 @@ export class SideBrowserChild extends JSWindowActorChild {
   // Files
   // -------------------------------------------------------------------------
 
-  async _attachOnly(files) {
-    let outcome = await this._attachFiles(files);
-    return { ok: outcome.attached.length > 0, ...outcome };
+  async _attachOnly(files, key) {
+    this._busy = true;
+    try {
+      let outcome = await this._attachFiles(files);
+      // Files attached by hand must not go out a second time with the message.
+      if (key && outcome.attached.length) {
+        this._sentKey = String(key);
+      }
+      return { ok: outcome.attached.length > 0, ...outcome };
+    } finally {
+      this._busy = false;
+    }
   }
 
+  /**
+   * Attach every file in as few steps as the page allows. A file input that
+   * takes several files gets one assignment with all of them, because a second
+   * assignment would replace the first.
+   *
+   * @param {object[]} files - `{name, type, text}` or `{name, type, data}`.
+   * @returns {Promise<{attached: string[], attachErrors: object[]}>}
+   */
   async _attachFiles(files) {
     let attached = [];
     let attachErrors = [];
-    for (let file of files) {
-      try {
-        this._attachFile(file);
-        attached.push(file.name);
-      } catch (e) {
-        attachErrors.push({ name: file.name, error: String(e) });
+    let groups = new Map();
+
+    for (let spec of files) {
+      let picked = this._pickInput(spec);
+      if (!picked) {
+        attachErrors.push({ name: spec.name, error: "no file input on the page accepts it" });
+        continue;
       }
+      let list = groups.get(picked.input) || [];
+      list.push(picked.file);
+      groups.set(picked.input, list);
     }
-    if (attached.length) {
-      await this._delay(1500);
+
+    for (let [input, list] of groups) {
+      let batches = input.hasAttribute("multiple") ? [list] : list.map((file) => [file]);
+      for (let i = 0; i < batches.length; i++) {
+        try {
+          this._assignFiles(input, batches[i]);
+          attached.push(...batches[i].map((file) => file.name));
+        } catch (e) {
+          for (let file of batches[i]) {
+            attachErrors.push({ name: file.name, error: String(e) });
+          }
+        }
+        if (i < batches.length - 1) {
+          await this._delay(1200);
+        }
+      }
     }
     return { attached, attachErrors };
   }
 
-  /**
-   * Attach a file through the site's own file input. Building a DataTransfer
-   * and assigning `input.files` is the only cross-site way to hand a real file
-   * to a page, because the input cannot be filled with a path.
-   */
-  _attachFile({ name, type, data }) {
-    let input = this._findFileInputs()[0];
-    if (!input) {
-      throw new Error("No file input on the page");
-    }
+  _assignFiles(input, fileObjects) {
     let win = this.contentWindow;
-    let bytes = this._toBytes(data);
-    let file = new win.File([bytes], name, { type });
     let dt = new win.DataTransfer();
-    dt.items.add(file);
+    for (let file of fileObjects) {
+      dt.items.add(file);
+    }
     input.files = dt.files;
     input.dispatchEvent(new win.Event("input", { bubbles: true }));
     input.dispatchEvent(new win.Event("change", { bubbles: true }));
+  }
+
+  /**
+   * The first file input that accepts this file. A text file that no input takes
+   * as Markdown gets a second try as plain text.
+   */
+  _pickInput(spec) {
+    let variants = [spec];
+    if (typeof spec.text === "string" && spec.type !== "text/plain") {
+      variants.push({
+        ...spec,
+        name: spec.name.replace(/\.[^.]+$/, "") + ".txt",
+        type: "text/plain",
+      });
+    }
+    let inputs = this._allFileInputs();
+    for (let variant of variants) {
+      for (let input of inputs) {
+        if (this._accepts(input, variant.name, variant.type)) {
+          return { input, file: this._makeFile(variant) };
+        }
+      }
+    }
+    return null;
+  }
+
+  _makeFile(spec) {
+    let win = this.contentWindow;
+    if (typeof spec.text === "string") {
+      return new win.File([spec.text], spec.name, { type: spec.type });
+    }
+    return new win.File([this._toBytes(spec.data)], spec.name, { type: spec.type });
   }
 
   /**
@@ -490,6 +487,32 @@ export class SideBrowserChild extends JSWindowActorChild {
     return bytes;
   }
 
+  /**
+   * Whether an input's `accept` list takes a file. No list means anything goes.
+   * A list holds extensions (".pdf"), exact types, and wildcards ("image/*").
+   */
+  _accepts(input, name, type) {
+    let accept = (input.getAttribute("accept") || "").toLowerCase().trim();
+    if (!accept) {
+      return true;
+    }
+    let lowerName = name.toLowerCase();
+    let lowerType = (type || "").toLowerCase();
+    return accept.split(",").some((token) => {
+      let value = token.trim();
+      if (!value || value === "*/*") {
+        return true;
+      }
+      if (value.startsWith(".")) {
+        return lowerName.endsWith(value);
+      }
+      if (value.endsWith("/*")) {
+        return lowerType.startsWith(value.slice(0, -1));
+      }
+      return value === lowerType;
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Sending
   // -------------------------------------------------------------------------
@@ -501,12 +524,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     if (mode !== "enter") {
       let button = this._findSendButton(selectors);
       if (button) {
-        this._busy = true;
-        try {
-          button.click();
-        } finally {
-          this._busy = false;
-        }
+        button.click();
         await this._delay(400);
         if (this._looksSent()) {
           return true;
@@ -538,10 +556,7 @@ export class SideBrowserChild extends JSWindowActorChild {
   }
 
   _isClickable(el) {
-    if (el.disabled) {
-      return false;
-    }
-    if (el.getAttribute("aria-disabled") === "true") {
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") {
       return false;
     }
     let rect = el.getBoundingClientRect();
@@ -554,10 +569,7 @@ export class SideBrowserChild extends JSWindowActorChild {
    */
   _looksSent() {
     let composer = this._findComposer();
-    if (!composer) {
-      return true;
-    }
-    return !this._composerText(composer).trim();
+    return !composer || !this._composerText(composer).trim();
   }
 
   async _pressEnter() {
@@ -573,14 +585,9 @@ export class SideBrowserChild extends JSWindowActorChild {
       cancelable: true,
       composed: true,
     };
-    this._busy = true;
-    try {
-      target.dispatchEvent(new win.KeyboardEvent("keydown", init));
-      target.dispatchEvent(new win.KeyboardEvent("keypress", init));
-      target.dispatchEvent(new win.KeyboardEvent("keyup", init));
-    } finally {
-      this._busy = false;
-    }
+    target.dispatchEvent(new win.KeyboardEvent("keydown", init));
+    target.dispatchEvent(new win.KeyboardEvent("keypress", init));
+    target.dispatchEvent(new win.KeyboardEvent("keyup", init));
     await this._delay(300);
     return true;
   }
@@ -604,13 +611,29 @@ export class SideBrowserChild extends JSWindowActorChild {
     return null;
   }
 
+  _hasComposerText() {
+    let composer = this._findComposer();
+    return !!composer && !!this._composerText(composer).trim();
+  }
+
+  _composerText(composer) {
+    if (composer.localName === "textarea" || composer.localName === "input") {
+      return composer.value || "";
+    }
+    return composer.innerText || composer.textContent || "";
+  }
+
   /**
-   * File inputs are almost always hidden: the page opens them from a button.
-   * They must not be filtered for visibility, only for being connected.
+   * File inputs are almost always hidden: the page opens them from a button, so
+   * they must not be filtered for visibility. The adapter's selectors come first
+   * because they name the input the site really uses, then every other one.
+   *
+   * @returns {HTMLInputElement[]}
    */
-  _findFileInputs() {
+  _allFileInputs() {
     let out = [];
-    for (let selector of this._adapter?.fileSelectors || []) {
+    let selectors = [...(this._adapter?.fileSelectors || []), "input[type='file']"];
+    for (let selector of selectors) {
       let nodes;
       try {
         nodes = this.document.querySelectorAll(selector);
@@ -618,37 +641,12 @@ export class SideBrowserChild extends JSWindowActorChild {
         continue;
       }
       for (let el of nodes) {
-        if (!el.isConnected || el.disabled) {
-          continue;
-        }
-        if (!this._acceptsDocuments(el)) {
-          continue;
-        }
-        if (!out.includes(el)) {
+        if (el.isConnected && !el.disabled && !out.includes(el)) {
           out.push(el);
         }
       }
     }
     return out;
-  }
-
-  /**
-   * Whether a file input will take a PDF. ChatGPT, when signed out, only offers
-   * image inputs, so handing it a PDF would silently do nothing.
-   */
-  _acceptsDocuments(el) {
-    let accept = (el.getAttribute("accept") || "").toLowerCase();
-    if (!accept) {
-      return true;
-    }
-    return accept.split(",").some((token) => {
-      let value = token.trim();
-      return value === "application/pdf"
-        || value === "application/*"
-        || value === "*/*"
-        || value === ""
-        || value.includes("pdf");
-    });
   }
 
   _isUsable(el) {
@@ -670,10 +668,7 @@ export class SideBrowserChild extends JSWindowActorChild {
   // Test helpers
   // -------------------------------------------------------------------------
 
-  /**
-   * Test helper: click the page's own send control the way a mouse would. The
-   * send intercept is what makes the message carry the context.
-   */
+  /** Click the page's own send control the way a mouse would. */
   _clickSendForTest() {
     let button = this._findSendButton(this._adapter?.sendSelectors || []);
     if (!button) {
@@ -696,7 +691,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     return {
       messages: received.length,
       received,
-      context: this._context,
+      pending: this._pending(),
       log: this.document.getElementById("log")?.textContent || "",
     };
   }
