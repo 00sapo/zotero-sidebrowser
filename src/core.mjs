@@ -197,7 +197,7 @@ async function refresh() {
 }
 
 function registerPrefObservers() {
-  for (let key of ["provider", "autoContext", "maxItems", "customURL", "customProviders", "showComposer"]) {
+  for (let key of ["provider", "maxItems", "customURL", "customProviders"]) {
     let id = Zotero.Prefs.registerObserver(`sidebrowser.${key}`, () => {
       try {
         section().applySettings();

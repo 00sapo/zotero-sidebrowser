@@ -10,8 +10,11 @@ export const DEFAULTS = {
   provider: "chatgpt",
   customURL: "",
   lastURL: "",
-  autoContext: true,
-  showComposer: false,
+  // Height in pixels that the user dragged the pane to. 0 means: fill the
+  // visible height of the item pane and follow the window.
+  paneHeight: 0,
+  // Zoom of the page in percent. 100 is the normal size.
+  zoomPercent: 100,
   maxItems: 30,
   customProviders: "[]",
 };
