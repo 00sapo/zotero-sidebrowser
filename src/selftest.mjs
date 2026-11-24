@@ -249,6 +249,41 @@ async function runSendTest(api, testURL, record) {
     && (third.received[2].files || []).map((f) => f.name).join(",") === "paper-metadata.md", {
     value: third?.received?.[2]?.files,
   });
+
+  // A page whose input takes PDFs only: the metadata must arrive as a PDF.
+  api.navigate(`${testURL}?pdfonly=1`);
+  await waitForPane(api, `${testURL}?pdfonly=1`);
+  await Zotero.Promise.delay(1500);
+  pane.options.metadata = true;
+  pane.options.pdf = false;
+  pane.textInserted = false;
+  api.render();
+  await api.syncPackage();
+  await typeInPage(pane, "PDF only page.");
+  await clickSend(pane);
+  await Zotero.Promise.delay(6000);
+  let pdfOnly = await readMockState(pane);
+  let pdfFiles = pdfOnly?.received?.[0]?.files || [];
+  record("pdf-only page: metadata travels as a PDF", pdfFiles.length === 1
+    && pdfFiles[0].name === "paper-metadata.pdf" && pdfFiles[0].type === "application/pdf" && pdfFiles[0].size > 300, {
+    value: pdfFiles,
+  });
+
+  // A page with no file input: the files must arrive by paste.
+  api.navigate(`${testURL}?nofile=1`);
+  await waitForPane(api, `${testURL}?nofile=1`);
+  await Zotero.Promise.delay(1500);
+  pane.options.metadata = true;
+  pane.options.pdf = true;
+  pane.textInserted = false;
+  api.render();
+  await api.syncPackage();
+  pane.root.querySelector('button[data-action="attach"]').click();
+  await Zotero.Promise.delay(3500);
+  let pasteState = await readMockState(pane);
+  let pastedNames = (pasteState?.pasted || []).map((f) => f.name);
+  record("no file input: files arrive by paste", pastedNames.includes("paper-metadata.md")
+    && pastedNames.some((n) => n.endsWith(".pdf")), { value: pastedNames });
 }
 
 function currentURL(pane) {

@@ -28,6 +28,34 @@
   window.__context = "";
 
   var composer = document.getElementById("composer");
+
+  // A page with no file input, like Gemini before its menu opens. The test uses
+  // it to check that files arrive by paste.
+  window.__pasted = [];
+  if (/nofile=1/.test(location.search)) {
+    var input = document.getElementById("files");
+    if (input) {
+      input.remove();
+    }
+  }
+  // A page whose file input takes PDFs only, like Duck.ai.
+  if (/pdfonly=1/.test(location.search)) {
+    var only = document.getElementById("files");
+    if (only) {
+      only.setAttribute("accept", ".pdf,application/pdf");
+    }
+  }
+  composer.addEventListener("paste", function (event) {
+    var files = event.clipboardData ? Array.prototype.slice.call(event.clipboardData.files) : [];
+    if (!files.length) {
+      return;
+    }
+    event.preventDefault();
+    files.forEach(function (file) {
+      window.__pasted.push({ name: file.name, type: file.type, size: file.size });
+    });
+    note("pasted=" + window.__pasted.length);
+  });
   var send = document.getElementById("send");
   var log = document.getElementById("log");
 

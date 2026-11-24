@@ -401,11 +401,12 @@ export class SideBrowserChild extends JSWindowActorChild {
     let attached = [];
     let attachErrors = [];
     let groups = new Map();
+    let leftovers = [];
 
     for (let spec of files) {
       let picked = this._pickInput(spec);
       if (!picked) {
-        attachErrors.push({ name: spec.name, error: "no file input on the page accepts it" });
+        leftovers.push(spec);
         continue;
       }
       let list = groups.get(picked.input) || [];
@@ -429,7 +430,56 @@ export class SideBrowserChild extends JSWindowActorChild {
         }
       }
     }
+
+    // Some pages, Gemini for one, create the file input only when a menu opens,
+    // and some inputs refuse the type. Pasting the files into the message box is
+    // the way a person would attach them without that menu.
+    if (leftovers.length) {
+      let outcome = this._attachByPaste(leftovers);
+      attached.push(...outcome.attached);
+      attachErrors.push(...outcome.attachErrors);
+    }
     return { attached, attachErrors };
+  }
+
+  /**
+   * Hand files to the page the way a paste or a drop would. A site that takes
+   * pasted files calls `preventDefault`, which tells us the paste was used. If
+   * not, a drop on the message box is tried next.
+   *
+   * @param {object[]} specs
+   * @returns {{attached: string[], attachErrors: object[]}}
+   */
+  _attachByPaste(specs) {
+    let win = this.contentWindow;
+    let composer = this._findComposer();
+    if (!composer) {
+      return {
+        attached: [],
+        attachErrors: specs.map((spec) => ({ name: spec.name, error: "no file input and no message box" })),
+      };
+    }
+    try {
+      let dt = new win.DataTransfer();
+      for (let spec of specs) {
+        dt.items.add(this._makeFile(spec));
+      }
+      composer.focus();
+      let paste = new win.ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt });
+      composer.dispatchEvent(paste);
+      if (!paste.defaultPrevented) {
+        let target = composer.closest("form") || composer.parentElement || composer;
+        for (let type of ["dragenter", "dragover", "drop"]) {
+          target.dispatchEvent(new win.DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+        }
+      }
+      return { attached: specs.map((spec) => spec.name), attachErrors: [] };
+    } catch (e) {
+      return {
+        attached: [],
+        attachErrors: specs.map((spec) => ({ name: spec.name, error: String(e) })),
+      };
+    }
   }
 
   _assignFiles(input, fileObjects) {
@@ -448,15 +498,16 @@ export class SideBrowserChild extends JSWindowActorChild {
    * as Markdown gets a second try as plain text.
    */
   _pickInput(spec) {
+    let inputs = this._allFileInputs();
+    let isText = typeof spec.text === "string";
     let variants = [spec];
-    if (typeof spec.text === "string" && spec.type !== "text/plain") {
+    if (isText && spec.type !== "text/plain") {
       variants.push({
         ...spec,
         name: spec.name.replace(/\.[^.]+$/, "") + ".txt",
         type: "text/plain",
       });
     }
-    let inputs = this._allFileInputs();
     for (let variant of variants) {
       for (let input of inputs) {
         if (this._accepts(input, variant.name, variant.type)) {
@@ -464,7 +515,97 @@ export class SideBrowserChild extends JSWindowActorChild {
         }
       }
     }
+    // Some pages take PDFs and images only. A text file then travels as a small
+    // PDF, which the site reads as text.
+    if (isText) {
+      let name = spec.name.replace(/\.[^.]+$/, "") + ".pdf";
+      for (let input of inputs) {
+        if (this._accepts(input, name, "application/pdf")) {
+          return {
+            input,
+            file: this._makeFile({ name, type: "application/pdf", data: this._textToPdf(spec.text) }),
+          };
+        }
+      }
+    }
     return null;
+  }
+
+  /**
+   * Turn plain text into a small PDF with Helvetica text on letter pages. Only
+   * Latin-1 characters survive, and the rest become "?". The text stays
+   * selectable, so a service that reads PDFs gets all of it.
+   *
+   * @param {string} text
+   * @returns {string} The PDF as a binary string.
+   */
+  _textToPdf(text) {
+    const WIDTH = 92;
+    const PER_PAGE = 58;
+
+    let lines = [];
+    for (let raw of String(text).split("\n")) {
+      let line = raw.replace(/\t/g, "    ");
+      while (line.length > WIDTH) {
+        let cut = line.lastIndexOf(" ", WIDTH);
+        if (cut < WIDTH / 2) {
+          cut = WIDTH;
+        }
+        lines.push(line.slice(0, cut));
+        line = line.slice(cut).replace(/^ +/, "");
+      }
+      lines.push(line);
+    }
+    let pages = [];
+    for (let i = 0; i < lines.length; i += PER_PAGE) {
+      pages.push(lines.slice(i, i + PER_PAGE));
+    }
+    if (!pages.length) {
+      pages.push([""]);
+    }
+
+    let escape = (line) => Array.from(line).map((ch) => {
+      let code = ch.charCodeAt(0);
+      if (ch === "\\" || ch === "(" || ch === ")") {
+        return `\\${ch}`;
+      }
+      if (code < 32) {
+        return " ";
+      }
+      if (code < 127) {
+        return ch;
+      }
+      return code < 256 ? `\\${code.toString(8).padStart(3, "0")}` : "?";
+    }).join("");
+
+    // Objects 1 to 3 are the catalog, the page list, and the font. Each page
+    // then takes two: the page itself and its content stream.
+    let objects = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      `<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + 2 * i} 0 R`).join(" ")}] /Count ${pages.length} >>`,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    ];
+    pages.forEach((pageLines, i) => {
+      let stream = `BT /F1 10 Tf 12 TL 40 760 Td\n${pageLines.map((l) => `(${escape(l)}) Tj T*`).join("\n")}\nET`;
+      objects.push(
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${5 + 2 * i} 0 R /Resources << /Font << /F1 3 0 R >> >> >>`,
+        `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+      );
+    });
+
+    let out = "%PDF-1.4\n";
+    let offsets = [];
+    objects.forEach((body, index) => {
+      offsets.push(out.length);
+      out += `${index + 1} 0 obj\n${body}\nendobj\n`;
+    });
+    let xref = out.length;
+    out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (let offset of offsets) {
+      out += `${String(offset).padStart(10, "0")} 00000 n \n`;
+    }
+    out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return out;
   }
 
   _makeFile(spec) {
@@ -688,9 +829,16 @@ export class SideBrowserChild extends JSWindowActorChild {
     } catch (e) {
       received = [];
     }
+    let pasted = [];
+    try {
+      pasted = win?.wrappedJSObject?.__pasted || [];
+    } catch (e) {
+      pasted = [];
+    }
     return {
       messages: received.length,
       received,
+      pasted,
       pending: this._pending(),
       log: this.document.getElementById("log")?.textContent || "",
     };
