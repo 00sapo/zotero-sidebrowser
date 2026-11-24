@@ -16,9 +16,10 @@
  * has the same effect as a temporary file. A file from disk travels as a binary
  * string, because that form clones faster across the actor boundary.
  *
- * File shapes:  { name, type, text }  and  { name, type, data }. A text file comes
- * with twinPDF: true, and the page script sends it as a PDF when the page takes no
- * text file.
+ * File shapes:  { name, type, text }  and  { name, type, data }. A text file carries
+ * `fromText: true`, so the page script can send it as a PDF or as a picture when
+ * the page takes neither text. A PDF carries the flag `isPdf`, and its text can be
+ * sent instead, for a page that takes no PDFs.
  * Nothing here touches the page DOM.
  */
 
@@ -238,18 +239,18 @@ export async function buildPackage({ items, selection, attachmentItem, options, 
 
   if (!skipText && options.metadata && papers.length) {
     let text = metadataText(papers);
-    files.push({ name: uniqueName("paper-metadata.md", used), type: "text/markdown", text, twinPDF: true });
+    files.push({ name: uniqueName("paper-metadata.md", used), type: "text/markdown", text, fromText: true });
   }
 
   if (!skipText && options.selection && selection?.text) {
     let text = selectionText(selection, attachmentItem);
-    files.push({ name: uniqueName("selected-text.md", used), type: "text/markdown", text, twinPDF: true });
+    files.push({ name: uniqueName("selected-text.md", used), type: "text/markdown", text, fromText: true });
   }
 
   if (options.annotations && papers.length) {
     let { text, images } = await annotationsContent(papers);
     if (text && !skipText) {
-      files.push({ name: uniqueName("annotations.md", used), type: "text/markdown", text, twinPDF: true });
+      files.push({ name: uniqueName("annotations.md", used), type: "text/markdown", text, fromText: true });
     } else if (!text) {
       skipped.push({ title: "the annotations", reason: "none" });
     }
@@ -257,7 +258,7 @@ export async function buildPackage({ items, selection, attachmentItem, options, 
       try {
         let read = await readFileFromDisk(image.path, uniqueName(image.name, used), "image/png");
         if (!read.tooBig) {
-          files.push(read);
+          files.push({ ...read, ...extra });
         }
       } catch (e) {
         Zotero.debug(`[Side Browser] Could not read an annotation picture: ${e}`);
@@ -273,7 +274,7 @@ export async function buildPackage({ items, selection, attachmentItem, options, 
       }
     }
     for (let attachment of attachments) {
-      await addAttachment(attachment, "application/pdf", files, skipped, used);
+      await addAttachment(attachment, "application/pdf", files, skipped, used, { isPdf: true });
     }
   }
 
@@ -292,7 +293,7 @@ export async function buildPackage({ items, selection, attachmentItem, options, 
   return { files, skipped };
 }
 
-async function addAttachment(attachment, type, files, skipped, used) {
+async function addAttachment(attachment, type, files, skipped, used, extra = {}) {
   let title = attachment.attachmentFilename || attachment.getField("title") || "attachment";
   let path = false;
   try {
@@ -310,7 +311,7 @@ async function addAttachment(attachment, type, files, skipped, used) {
       skipped.push({ title, reason: "larger than 30 MB" });
       return;
     }
-    files.push(read);
+    files.push({ ...read, ...extra });
   } catch (e) {
     skipped.push({ title, reason: "could not be read" });
   }

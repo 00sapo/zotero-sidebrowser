@@ -444,6 +444,17 @@ function createPaneApi(pane) {
       return { ...built, text: pane.editedText || "" };
     },
 
+    /**
+     * The text of a PDF the page would not take, so it can travel as text or as a
+     * picture instead.
+     *
+     * @param {string} name - The attachment file name in the package.
+     * @returns {Promise<string>}
+     */
+    async pdfText(name) {
+      return pdfTextFor(pane, name);
+    },
+
     /** Called by the page script after it sent a message with files. */
     reportSent(report) {
       reportSent(report);
@@ -1442,6 +1453,49 @@ export function describePanes() {
     options: describeOptions(pane.options),
     selection: pane.selection?.text?.slice(0, 80) || null,
   }));
+}
+
+/**
+ * The text of the PDF that the current package would send under this name. The
+ * text comes from Zotero's own PDF worker, so no extra library is needed.
+ *
+ * @param {object} pane
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
+async function pdfTextFor(pane, name) {
+  try {
+    let itemID = pdfItemFor(pane, name);
+    if (!itemID) {
+      return "";
+    }
+    let result = await Zotero.PDFWorker.getFullText(itemID, null, true);
+    return String(result?.text || "");
+  } catch (e) {
+    Zotero.debug(`[Side Browser] Could not read the text of ${name}: ${e}`);
+    return "";
+  }
+}
+
+/** The attachment that a package file name comes from. */
+function pdfItemFor(pane, name) {
+  for (let item of pane.scope.items) {
+    let paper = item.isAttachment() ? item.parentItem : item;
+    if (!paper) {
+      continue;
+    }
+    for (let id of paper.getAttachments()) {
+      let attachment = Zotero.Items.get(id);
+      if (!attachment?.isPDFAttachment()) {
+        continue;
+      }
+      let fileName = attachment.attachmentFilename || attachment.getField("title") || "attachment.pdf";
+      if (fileName === name) {
+        return attachment.id;
+      }
+    }
+  }
+  return null;
 }
 
 export function truncate(text, max) {

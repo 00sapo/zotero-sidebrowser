@@ -430,8 +430,23 @@ export class SideBrowserChild extends JSWindowActorChild {
    * @returns {Promise<{attached: string[], attachErrors: object[]}>}
    */
   async _attachFiles(files) {
+    this._log(`attach: ${files.map((f) => f.name).join(",")}`);
     let attached = [];
     let attachErrors = [];
+
+    // A page that keeps its input hidden until its attach button is clicked is
+    // opened first: the shapes below depend on what that input takes.
+    if (!this._allFileInputs().length) {
+      this._clickAttachButton();
+      await this._delay(700);
+    }
+
+    // Each file takes the shape this page will accept.
+    files = files.map((spec) => this._forThisPage(spec));
+    // A PDF whose page takes no PDFs becomes its own text, then a picture if the
+    // page takes neither.
+    files = await this._replaceRefusedPdfs(files);
+    files = files.map((spec) => this._forThisPage(spec));
 
     // Order of attempts, best first:
     //   1. Click the site's own attach button, then fill the file input it
@@ -447,6 +462,12 @@ export class SideBrowserChild extends JSWindowActorChild {
     }
 
     let inputs = this._allFileInputs();
+    if (!inputs.length) {
+      // The menu may need a second click, or the file dialog took the first one.
+      this._clickAttachButton();
+      await this._delay(900);
+      inputs = this._allFileInputs();
+    }
     let remaining = files;
 
     if (inputs.length) {
@@ -511,6 +532,41 @@ export class SideBrowserChild extends JSWindowActorChild {
       }
     }
     return { attached, attachErrors };
+  }
+
+  /**
+   * For a file marked `asText`, ask the parent for the text of the PDF and return a
+   * text file instead. A page that takes neither a PDF nor text then gets a
+   * picture, which `_forThisPage` turns it into later.
+   *
+   * @param {object[]} files
+   * @returns {Promise<object[]>}
+   */
+  async _replaceRefusedPdfs(files) {
+    let out = [];
+    for (let spec of files) {
+      if (!spec.asText) {
+        out.push(spec);
+        continue;
+      }
+      let text = "";
+      try {
+        text = String(await this.sendQuery("pdf-text", { name: spec.name }) || "");
+      } catch (e) {
+        text = "";
+      }
+      if (!text.trim()) {
+        // No text layer: leave it out rather than send a file the page rejects.
+        continue;
+      }
+      out.push({
+        name: spec.name.replace(/\.[^.]+$/, "") + ".txt",
+        type: "text/plain",
+        text,
+        fromText: true,
+      });
+    }
+    return out;
   }
 
   /**
@@ -629,24 +685,49 @@ export class SideBrowserChild extends JSWindowActorChild {
   }
 
   /**
-   * Text travels as a PDF when the page has a file input that takes documents but
-   * no text. Sites that check the `accept` list, such as Gemini for its hidden
-   * input, then accept the words as a small document.
+   * Change the shape of a text file to what the page will take.
+   *
+   * A page that refuses text but takes documents gets a small PDF with the same
+   * words. A page that takes pictures only, such as Brave Leo or Euria, gets a
+   * picture of the words. The input's `accept` list is what decides.
    *
    * @param {object} spec
    * @returns {object}
    */
   _forThisPage(spec) {
-    if (!spec.twinPDF || typeof spec.text !== "string") {
+    if (typeof spec.text !== "string" || spec.asPdf || spec.asImage) {
       return spec;
     }
     let inputs = this._allFileInputs();
     if (!inputs.length) {
       return spec;
     }
-    let takesText = inputs.some((input) => this._accepts(input, spec.name, "text/markdown"));
-    let takesPdf = inputs.some((input) => this._accepts(input, "x.pdf", "application/pdf"));
-    return takesPdf && !takesText ? { ...spec, asPdf: true } : spec;
+    let takes = (name, type) => inputs.some((input) => this._accepts(input, name, type));
+    let takesText = takes(spec.name, "text/markdown")
+      || takes(spec.name.replace(/\.[^.]+$/, "") + ".txt", "text/plain");
+    if (spec.isPdf) {
+      // A page that takes no PDF can still get the words of it.
+      if (takes(spec.name, "application/pdf")) {
+        return spec;
+      }
+      if (takesText) {
+        return { ...spec, asText: true };
+      }
+      if (takes("x.png", "image/png")) {
+        return { ...spec, asImage: true };
+      }
+      return { ...spec, asText: true };
+    }
+    if (takesText) {
+      return spec;
+    }
+    if (takes("x.pdf", "application/pdf")) {
+      return { ...spec, asPdf: true };
+    }
+    if (takes("x.png", "image/png")) {
+      return { ...spec, asImage: true };
+    }
+    return spec;
   }
 
   /**
@@ -730,6 +811,98 @@ export class SideBrowserChild extends JSWindowActorChild {
    * page's realm, because a page that wraps `addEventListener` or compares
    * `event.target` created in another compartment can miss it.
    */
+  /**
+   * Draw the words on a canvas and return a PNG. A chat that takes pictures only,
+   * such as Brave Leo or Euria, then receives the text as an image. The picture is
+   * black on white, and wide enough to read at the normal zoom.
+   *
+   * @param {string} text
+   * @returns {Uint8Array}
+   */
+  _textToPng(text) {
+    let doc = this.document;
+    const WIDTH = 900;
+    const MARGIN = 28;
+    const LINE = 18;
+    const HEAD_LINE = 26;
+    const BODY_FONT = "13px sans-serif";
+    const HEAD_FONT = "bold 15px sans-serif";
+
+    let canvas = doc.createElement("canvas");
+    let ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("The page offers no canvas");
+    }
+
+    // Wrap every line to the page width, keeping the blank lines.
+    let lines = [];
+    for (let raw of String(text).split("\n")) {
+      let line = raw.replace(/\t/g, "    ");
+      if (!line.trim()) {
+        lines.push({ text: "", head: false });
+        continue;
+      }
+      let head = /^#{1,3} /.test(line);
+      let body = line.replace(/^#{1,3} /, "");
+      ctx.font = head ? HEAD_FONT : BODY_FONT;
+      let current = "";
+      for (let word of body.split(/\s+/)) {
+        let candidate = current ? `${current} ${word}` : word;
+        if (ctx.measureText(candidate).width > WIDTH - MARGIN * 2 && current) {
+          lines.push({ text: current, head });
+          current = word;
+        } else {
+          current = candidate;
+        }
+      }
+      if (current) {
+        lines.push({ text: current, head });
+      }
+    }
+    if (!lines.length) {
+      lines.push({ text: "", head: false });
+    }
+
+    // Very long text is cut, with a note, so the picture stays a picture.
+    const MAX_LINES = 240;
+    if (lines.length > MAX_LINES) {
+      lines = lines.slice(0, MAX_LINES);
+      lines.push({ text: "[The rest of the text was cut from this picture.]", head: false });
+    }
+
+    let height = 0;
+    for (let line of lines) {
+      height += line.head ? HEAD_LINE : LINE;
+    }
+    height = Math.max(120, Math.ceil(MARGIN * 2 + height));
+
+    canvas.width = WIDTH;
+    canvas.height = height;
+    ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, WIDTH, height);
+    ctx.fillStyle = "#111111";
+    ctx.textBaseline = "top";
+    let y = MARGIN;
+    for (let line of lines) {
+      ctx.font = line.head ? HEAD_FONT : BODY_FONT;
+      ctx.fillText(line.text, MARGIN, y);
+      y += line.head ? HEAD_LINE : LINE;
+    }
+    return this._dataUrlToBytes(canvas.toDataURL("image/png"));
+  }
+
+  /** @param {string} dataUrl */
+  _dataUrlToBytes(dataUrl) {
+    let base64 = String(dataUrl).split(",")[1] || "";
+    let binary = this.contentWindow.atob(base64);
+    let bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
   _assignFiles(input, fileObjects) {
     let win = this.contentWindow;
     let dt = new win.DataTransfer();
@@ -766,6 +939,11 @@ export class SideBrowserChild extends JSWindowActorChild {
         type: "text/plain",
       });
     }
+    if (spec.asImage && typeof spec.text === "string") {
+      variants = [{ ...spec, name: spec.name.replace(/\.[^.]+$/, "") + ".png", type: "image/png" }];
+    } else if (spec.asPdf && typeof spec.text === "string") {
+      variants = [{ ...spec, name: spec.name.replace(/\.[^.]+$/, "") + ".pdf", type: "application/pdf" }];
+    }
     for (let variant of variants) {
       for (let input of inputs) {
         if (this._accepts(input, variant.name, variant.type)) {
@@ -782,6 +960,15 @@ export class SideBrowserChild extends JSWindowActorChild {
   _makeFile(spec) {
     // The File must come from the page's own window, or the page cannot read it.
     let win = this.contentWindow;
+    if (spec.asText && typeof spec.text === "string") {
+      return new win.File([spec.text], spec.name.replace(/\.[^.]+$/, "") + ".txt", { type: "text/plain" });
+    }
+    if (spec.asImage && typeof spec.text === "string") {
+      // A page that takes pictures only gets the words as a picture.
+      return new win.File([this._textToPng(spec.text)], spec.name.replace(/\.[^.]+$/, "") + ".png", {
+        type: "image/png",
+      });
+    }
     if (spec.asPdf && typeof spec.text === "string") {
       // A page that takes documents only gets the same words as a PDF.
       return new win.File([this._toBytes(this._textToPdf(spec.text))], spec.name.replace(/\.[^.]+$/, "") + ".pdf", {

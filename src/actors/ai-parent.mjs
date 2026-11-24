@@ -27,6 +27,9 @@ export class SideBrowserParent extends JSWindowActorParent {
           Zotero.launchURL(data.href);
         }
         return undefined;
+      case "pdf-text":
+        // A page that takes no PDFs still gets the words of one.
+        return pane ? pane.pdfText(data.name) : "";
       case "get-package":
         // The page script asks for the files when the user sends. The answer is
         // a promise, which the actor system resolves for `sendQuery`.

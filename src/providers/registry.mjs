@@ -18,6 +18,10 @@
  *                                create or unlock the input only when it opens
  *   fileSelectors      string[]  input[type=file] elements
  *   acceptsDocuments   boolean   whether the composer accepts a non-image file
+ *   pdfText            "pdf" | "image" | false
+ *                                what a PDF's text is sent as, for a page that
+ *                                takes no PDFs: a PDF of the text, or a picture of
+ *                                it. false leaves the PDF out.
  *   badges             string[]  which marks the service earns, from the lists in
  *                                the readme: "eco" (climate-aware energy) and
  *                                "privacy" (privacy-respecting policy). Every
@@ -225,7 +229,7 @@ export const DEFAULT_PROVIDERS = [
       "button[aria-label*='Attach' i]",
     ],
     sendSelectors: ["button[aria-label='Send']", "button[type='submit']"],
-    notes: "Signed out, the page takes only images, so text goes as a PDF.",
+    notes: "The page takes pictures only, so the text is sent as a picture.",
   }),
   generic({
     id: "ecosia",
@@ -267,7 +271,7 @@ export const DEFAULT_PROVIDERS = [
     ],
     sendSelectors: ["button[type='submit']", "button[aria-label='Ask']"],
     fileSelectors: ["input[name='upload']", "input[type='file']"],
-    notes: "The page takes PDFs and images only, so text goes as a PDF.",
+    notes: "The page takes PDFs and pictures only, so the text is sent as a PDF.",
   }),
   generic({
     id: "brave",
@@ -280,7 +284,7 @@ export const DEFAULT_PROVIDERS = [
     ],
     sendSelectors: ["button.tap-input-primary-button", "button[aria-label='Ask']"],
     fileSelectors: ["input.tap-image-input", "input[type='file']"],
-    notes: "The page takes images only, so a drop is used. Edit context sends the text in the message box instead.",
+    notes: "The page takes pictures only, so the text is sent as a picture.",
   }),
   generic({
     id: "venice",
