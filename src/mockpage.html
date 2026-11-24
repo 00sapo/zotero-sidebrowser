@@ -6,85 +6,98 @@
 <style>
   body { font: 13px system-ui, sans-serif; margin: 12px; }
   #composer { width: 100%; height: 70px; box-sizing: border-box; }
-  #files { display: none; }
   #log { white-space: pre-wrap; font-family: monospace; font-size: 11px; }
 </style>
 </head>
 <body>
 <h1>Mock chat</h1>
 <textarea id="composer" placeholder="Type a message"></textarea>
-<input id="files" type="file" accept=".pdf,.md,.txt,text/*,application/pdf" multiple hidden/>
+<button id="attach" type="button">Attach</button>
+<div id="input-slot"></div>
 <button id="send" type="button">Send</button>
 <div id="log">idle</div>
 
 <script>
 /*
- * A minimal chat page for the self test. It records what arrived, so the test
- * can prove that a message, its context, and a PDF really reached the page.
+ * A minimal chat page for the self test, built the way the real services work:
+ *
+ *   - the file input exists only after the attach button is clicked
+ *   - a file is taken when the input reports a change, and the page owns it from
+ *     then on, so clearing the input does not lose it
+ *   - the send button takes whatever the page holds
+ *
+ * Query flags switch on the awkward cases:
+ *   nofile=1    the input takes images only
+ *   pdfonly=1   the input takes PDFs only
  */
 (function () {
-  var received = [];
-  window.__received = received;
-  window.__context = "";
-
   var composer = document.getElementById("composer");
-
-  // A page with no file input, like Gemini before its menu opens. The test uses
-  // it to check that files arrive by paste.
-  window.__pasted = [];
-  if (/nofile=1/.test(location.search)) {
-    var input = document.getElementById("files");
-    if (input) {
-      input.remove();
-    }
-  }
-  // A page whose file input takes PDFs only, like Duck.ai.
-  if (/pdfonly=1/.test(location.search)) {
-    var only = document.getElementById("files");
-    if (only) {
-      only.setAttribute("accept", ".pdf,application/pdf");
-    }
-  }
-  composer.addEventListener("paste", function (event) {
-    var files = event.clipboardData ? Array.prototype.slice.call(event.clipboardData.files) : [];
-    if (!files.length) {
-      return;
-    }
-    event.preventDefault();
-    files.forEach(function (file) {
-      window.__pasted.push({ name: file.name, type: file.type, size: file.size });
-    });
-    note("pasted=" + window.__pasted.length);
-  });
-  var send = document.getElementById("send");
   var log = document.getElementById("log");
+  var slot = document.getElementById("input-slot");
+  var attached = [];
 
   function note(text) {
     log.textContent = text;
   }
 
-  send.addEventListener("click", function () {
+  window.__received = [];
+  window.__attached = attached;
+  window.__dropped = [];
+
+  document.getElementById("attach").addEventListener("click", function () {
+    if (slot.querySelector("input")) {
+      note("input ready");
+      return;
+    }
+    var element = document.createElement("input");
+    element.id = "files";
+    element.type = "file";
+    element.multiple = true;
+    element.hidden = true;
+    element.setAttribute("accept", /pdfonly=1/.test(location.search)
+      ? ".pdf,application/pdf"
+      : (/nofile=1/.test(location.search) ? "image/*" : ""));
+    element.addEventListener("change", function () {
+      // The page copies the files out of its own input on every change.
+      note("change with " + element.files.length + " file(s)");
+      Array.prototype.map.call(element.files, function (file) {
+        return { name: file.name, type: file.type, size: file.size };
+      }).forEach(function (file) {
+        attached.push(file);
+      });
+      note("attached=" + attached.length);
+    });
+    slot.appendChild(element);
+    note("input ready");
+  });
+
+  document.addEventListener("dragover", function (event) {
+    event.preventDefault();
+  });
+  document.addEventListener("drop", function (event) {
+    var files = event.dataTransfer ? Array.prototype.slice.call(event.dataTransfer.files) : [];
+    if (!files.length) {
+      return;
+    }
+    event.preventDefault();
+    window.__dropped.push.apply(window.__dropped, files.map(function (file) {
+      return { name: file.name, type: file.type, size: file.size };
+    }));
+  });
+
+  document.getElementById("send").addEventListener("click", function () {
     var text = composer.value;
     if (!text || !text.trim()) {
       note("nothing to send");
       return;
     }
-    received.push({
-      text: text,
-      files: Array.prototype.map.call(document.getElementById("files").files, function (file) {
-        return { name: file.name, type: file.type, size: file.size };
-      })
-    });
+    // A page that keeps its file input reads it again when the message leaves.
+    var files = attached.splice(0, attached.length)
+      .concat(window.__dropped.splice(0, window.__dropped.length));
+    window.__received.push({ text: text, files: files });
     composer.value = "";
-    document.getElementById("files").value = "";
-    note("messages=" + received.length);
+    note("messages=" + window.__received.length);
   });
-
-  // The test asks for the held context through the actor, but it also checks
-  // that the page itself never had to know about it.
-  window.__setContext = function (value) {
-    window.__context = value;
-  };
 })();
 </script>
 </body>

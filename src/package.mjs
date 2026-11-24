@@ -16,7 +16,9 @@
  * has the same effect as a temporary file. A file from disk travels as a binary
  * string, because that form clones faster across the actor boundary.
  *
- * File shapes:  { name, type, text }  and  { name, type, data }.
+ * File shapes:  { name, type, text }  and  { name, type, data }. A text file comes
+ * with twinPDF: true, and the page script sends it as a PDF when the page takes no
+ * text file.
  * Nothing here touches the page DOM.
  */
 
@@ -235,29 +237,19 @@ export async function buildPackage({ items, selection, attachmentItem, options, 
   let papers = dedupe(items);
 
   if (!skipText && options.metadata && papers.length) {
-    files.push({
-      name: uniqueName("paper-metadata.md", used),
-      type: "text/markdown",
-      text: metadataText(papers),
-    });
+    let text = metadataText(papers);
+    files.push({ name: uniqueName("paper-metadata.md", used), type: "text/markdown", text, twinPDF: true });
   }
 
   if (!skipText && options.selection && selection?.text) {
-    files.push({
-      name: uniqueName("selected-text.md", used),
-      type: "text/markdown",
-      text: selectionText(selection, attachmentItem),
-    });
+    let text = selectionText(selection, attachmentItem);
+    files.push({ name: uniqueName("selected-text.md", used), type: "text/markdown", text, twinPDF: true });
   }
 
   if (options.annotations && papers.length) {
     let { text, images } = await annotationsContent(papers);
     if (text && !skipText) {
-      files.push({
-        name: uniqueName("annotations.md", used),
-        type: "text/markdown",
-        text,
-      });
+      files.push({ name: uniqueName("annotations.md", used), type: "text/markdown", text, twinPDF: true });
     } else if (!text) {
       skipped.push({ title: "the annotations", reason: "none" });
     }

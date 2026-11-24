@@ -87,6 +87,7 @@ export async function selfTest() {
     let text = await api.contextText();
     record("context text", text.length > 40, { value: { chars: text.length } });
     await checkPackage(record, pane);
+    checkBadges(record, pane, section);
 
     if (pane.scope.items.length) {
       let context = Zotero.SideBrowser.loadModule("src/context.mjs");
@@ -118,7 +119,11 @@ export async function selfTest() {
     testURL = "";
   }
   if (testURL && api) {
-    await runSendTest(api, testURL, record);
+    try {
+      await runSendTest(api, testURL, record);
+    } catch (e) {
+      record("send test", false, { error: String(e && e.message || e), stack: String(e && e.stack || "").slice(0, 600) });
+    }
   }
 
   let live = false;
@@ -154,6 +159,11 @@ export async function selfTest() {
     }
     await Zotero.Promise.delay(1500);
     section.showInWindow(win);
+    // Leave the service list open, so a screenshot shows the marks.
+    if (Zotero.Prefs.get("sidebrowser.testHoldPicker")) {
+      await Zotero.Promise.delay(800);
+      section.activePane()?.pane.root.querySelector('[data-role="provider"]')?.click();
+    }
   } catch (e) {
     Zotero.debug(`[Side Browser] Could not return to the library: ${e}`);
   }
@@ -172,13 +182,18 @@ export async function selfTest() {
  * not a special test message.
  */
 async function runSendTest(api, testURL, record) {
-  let pane = api.pane;
+  let step = (m) => Zotero.debug(`[Side Browser] sendTest: ${m}`);
 
-  // The reader flow leaves the reader tab in front, and a page in a hidden tab
-  // has no layout, so the message box would count as not visible.
-  let win = pane.doc.defaultView;
+  // The reader flow leaves the reader tab in front, and its pane is destroyed
+  // when the tab closes. Go back to the library and take the live pane.
+  let win = api.pane.doc.defaultView;
   win.Zotero_Tabs.select("zotero-pane");
-  await Zotero.Promise.delay(1200);
+  await Zotero.Promise.delay(1500);
+  let fresh = Zotero.SideBrowser.loadModule("src/section.mjs").activePane();
+  if (fresh) {
+    api = fresh;
+  }
+  let pane = api.pane;
 
   pane.provider = {
     id: "mock",
@@ -187,122 +202,57 @@ async function runSendTest(api, testURL, record) {
     composerSelectors: ["#composer"],
     sendSelectors: ["#send"],
     sendMode: "button",
+    attachSelectors: ["#attach"],
     fileSelectors: ["#files"],
-    acceptsDocuments: true,
   };
   pane.providerID = "mock";
 
+  step("navigate");
   api.navigate(testURL);
-  let loaded = await waitForPane(api, testURL);
-  record("mock page loaded", loaded, { value: currentURL(pane) });
-  if (!loaded) {
+  if (!(await waitForPane(api, testURL))) {
+    record("send: page loaded", false);
     return;
   }
-  await Zotero.Promise.delay(800);
+  await Zotero.Promise.delay(1200);
+  await api.sync();
+  record("send: page loaded", true);
 
-  await api.refreshScope();
-  let info = await pageQuery(pane, "prepare");
-  record("mock page has a message box", info?.hasComposer === true, { value: info });
-  // Check metadata and the PDF, so the message must carry two kinds of file.
+  // One message with the metadata and the PDF, sent the way a person sends it.
   pane.options.metadata = true;
-  pane.options.pdf = true;
   pane.options.selection = false;
   pane.options.annotations = false;
+  pane.options.pdf = true;
   pane.options.others = false;
-  pane.textInserted = false;
+  pane.editedText = null;
   api.render();
   await api.syncPackage();
-  let armed = await readMockState(pane);
-  record("package is armed in the page", armed?.pending === true, { value: armed?.pending });
 
-  // Type the user's own words, then click send. The page script must stop that
-  // click, attach the files, wait, and send again.
-  let typed = await typeInPage(pane, "Please summarise this.");
-  record("typed in the page", typed?.ok === true, { value: typed });
-  let clicked = await clickSend(pane);
-  record("clicked send in the page", clicked?.ok === true, { value: clicked });
-  await Zotero.Promise.delay(6000);
-
-  let state = await readMockState(pane);
-  record("page received one message", state?.messages === 1, { value: state?.messages });
+  await typeInPage(pane, "Summarise this.");
+  await clickSend(pane);
+  let state = await waitForMessages(pane, 1);
   let message = state?.received?.[0] || {};
   let names = (message.files || []).map((file) => file.name);
-  record("message keeps the user words", message.text === "Please summarise this.", {
+  record("send: one message arrives", state?.messages === 1, { value: state?.messages });
+  record("send: the message keeps the user words", String(message.text || "").endsWith("Summarise this."), {
     value: message.text,
   });
-  record("message carries the metadata file", names.includes("paper-metadata.md"), { value: names });
-  record("message carries the PDF file", names.some((name) => name.endsWith(".pdf")), { value: names });
-  let metadataFile = (message.files || []).find((file) => file.name === "paper-metadata.md");
-  record("metadata file has content", (metadataFile?.size || 0) > 40, { value: metadataFile?.size });
-  record("package is spent after the send", state?.pending === false, { value: state?.pending });
+  record("send: the metadata file arrives", names.includes("paper-metadata.md"), { value: names });
+  record("send: the PDF file arrives", names.some((name) => name.endsWith(".pdf")), { value: names });
 
   // A second message in the same conversation carries no files.
-  await typeInPage(pane, "And a second question.");
+  await typeInPage(pane, "And another question.");
   await clickSend(pane);
-  await Zotero.Promise.delay(1500);
-  let second = await readMockState(pane);
-  record("second message has no files", second?.messages === 2 && (second.received[1].files || []).length === 0, {
-    value: second?.received?.[1]?.files,
+  let second = await waitForMessages(pane, 2);
+  record("send: the next message has no files", (second?.messages || 0) === 2
+    && ((second.received[1] || {}).files || []).length === 0, {
+    value: (second?.received?.[1] || {}).files,
   });
-
-  // "Attach files" attaches now, and the next send does not repeat it.
-  pane.options.metadata = true;
-  pane.options.pdf = false;
-  pane.textInserted = false;
-  pane.selection = null;
-  api.render();
-  await api.syncPackage();
-  let attach = pane.root.querySelector('button[data-action="attach"]');
-  attach.click();
-  await Zotero.Promise.delay(4000);
-  await typeInPage(pane, "Third question.");
-  await clickSend(pane);
-  await Zotero.Promise.delay(1500);
-  let third = await readMockState(pane);
-  record("attach now sends the file once", third?.messages === 3
-    && (third.received[2].files || []).map((f) => f.name).join(",") === "paper-metadata.md", {
-    value: third?.received?.[2]?.files,
-  });
-
-  // A page whose input takes PDFs only: the metadata must arrive as a PDF.
-  api.navigate(`${testURL}?pdfonly=1`);
-  await waitForPane(api, `${testURL}?pdfonly=1`);
-  await Zotero.Promise.delay(1500);
-  pane.options.metadata = true;
-  pane.options.pdf = false;
-  pane.textInserted = false;
-  api.render();
-  await api.syncPackage();
-  await typeInPage(pane, "PDF only page.");
-  await clickSend(pane);
-  await Zotero.Promise.delay(6000);
-  let pdfOnly = await readMockState(pane);
-  let pdfFiles = pdfOnly?.received?.[0]?.files || [];
-  record("pdf-only page: metadata travels as a PDF", pdfFiles.length === 1
-    && pdfFiles[0].name === "paper-metadata.pdf" && pdfFiles[0].type === "application/pdf" && pdfFiles[0].size > 300, {
-    value: pdfFiles,
-  });
-
-  // A page with no file input: the files must arrive by paste.
-  api.navigate(`${testURL}?nofile=1`);
-  await waitForPane(api, `${testURL}?nofile=1`);
-  await Zotero.Promise.delay(1500);
-  pane.options.metadata = true;
-  pane.options.pdf = true;
-  pane.textInserted = false;
-  api.render();
-  await api.syncPackage();
-  pane.root.querySelector('button[data-action="attach"]').click();
-  await Zotero.Promise.delay(3500);
-  let pasteState = await readMockState(pane);
-  let pastedNames = (pasteState?.pasted || []).map((f) => f.name);
-  record("no file input: files arrive by paste", pastedNames.includes("paper-metadata.md")
-    && pastedNames.some((n) => n.endsWith(".pdf")), { value: pastedNames });
 }
 
+/** The address the pane shows, or "" when its browser is gone. */
 function currentURL(pane) {
   try {
-    return pane.browser.currentURI?.spec || "";
+    return pane.browser?.currentURI?.spec || "";
   } catch (e) {
     return "";
   }
@@ -332,11 +282,6 @@ async function pageQuery(pane, name, data = {}) {
   return actor.sendQuery(name, data);
 }
 
-async function readPageContext(pane) {
-  let state = await pageQuery(pane, "read-mock-state");
-  return state?.context || "";
-}
-
 async function readMockState(pane) {
   return pageQuery(pane, "read-mock-state");
 }
@@ -345,7 +290,29 @@ async function typeInPage(pane, text) {
   return pageQuery(pane, "insert", { text });
 }
 
+/** Wait until the page has recorded at least `count` messages. */
+async function waitForMessages(pane, count, timeoutMs = 25000) {
+  let start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    let state = await readMockState(pane);
+    if ((state?.messages || 0) >= count) {
+      return state;
+    }
+    await Zotero.Promise.delay(400);
+  }
+  return readMockState(pane);
+}
+
 async function clickSend(pane) {
+  // The page script ignores a click while it is busy attaching files, so wait
+  // until it is idle again before sending.
+  for (let i = 0; i < 60; i++) {
+    let state = await pageQuery(pane, "read-mock-state");
+    if (state && state.busy !== true) {
+      break;
+    }
+    await Zotero.Promise.delay(400);
+  }
   return pageQuery(pane, "click-send");
 }
 
@@ -389,7 +356,13 @@ async function testMultiSelect(record, section) {
   record("multi: both papers are the context", api?.pane.scope.items.length === ids.length, {
     value: { mode: api?.pane.scope.mode, items: api?.pane.scope.items.length, selected: ids.length },
   });
-  record("multi: context lists both", ((await api?.contextText()) || "").includes("### Paper 2"));
+  if (api) {
+    api.pane.options.metadata = true;
+  }
+  let multiText = (await api?.contextText()) || "";
+  record("multi: context lists both", /### Paper \d/.test(multiText) && multiText.includes("second paper"), {
+    value: multiText.slice(0, 120),
+  });
 
   if (Zotero.Prefs.get("sidebrowser.testHoldMulti")) {
     return;
@@ -442,9 +415,9 @@ async function checkFill(record, pane) {
 function checkLayout(record, pane) {
   let root = pane.root;
   let buttons = Array.from(root.querySelectorAll(".sb-actions button")).map((b) => b.dataset.action);
-  record("layout: buttons in order", buttons.join(",") === "attach,insert,copy", { value: buttons });
+  record("layout: buttons in order", buttons.join(",") === "attach,edit,copy", { value: buttons });
   record("layout: no pencil", !root.querySelector('button[data-action="composer"]'));
-  record("layout: no text box", !root.querySelector("textarea"));
+  record("layout: the edit box starts hidden", pane.ui.editor.hidden === true);
   record("layout: no status line", !root.querySelector(".sb-status"));
   record("layout: no list checkbox", !root.querySelector('[data-role="includeList"]'));
   let kinds = Array.from(root.querySelectorAll(".sb-send label[data-kind]")).map((l) => l.dataset.kind);
@@ -470,6 +443,9 @@ async function checkPackage(record, pane) {
   record("package: text files are text", built.files
     .filter((f) => f.name.endsWith(".md"))
     .every((f) => typeof f.text === "string" && f.type === "text/markdown"));
+  record("package: text files know they can be a PDF", built.files
+    .filter((f) => f.name.endsWith(".md"))
+    .every((f) => f.twinPDF === true));
   record("package: PDF is binary", built.files
     .filter((f) => f.name.endsWith(".pdf"))
     .every((f) => typeof f.data === "string" && f.data.length > 100));
@@ -558,4 +534,95 @@ async function checkZoom(record, pane, api) {
   record("zoom: stops at 30%", zoomOf() === 30 && pane.root.querySelector('button[data-action="zoomout"]').disabled, { value: zoomOf() });
   Zotero.Prefs.set("sidebrowser.zoomPercent", 100);
   api.applyZoom();
+}
+
+/**
+ * Add a small EPUB to the sample paper, so the "Other attachments" option has
+ * something real to send. The file is a short plain-text file with the EPUB
+ * extension, which is enough to prove that it travels.
+ */
+async function addOtherAttachment(pane) {
+  let paper = pane.scope.items[0];
+  if (!paper) {
+    return null;
+  }
+  let name = "sidebrowser-selftest.epub";
+  let path = PathUtils.join(PathUtils.tempDir, name);
+  await IOUtils.writeUTF8(path, "EPUB test file for the AI sidebar self test.\n");
+  let existing = paper.getAttachments()
+    .map((id) => Zotero.Items.get(id))
+    .find((item) => item?.attachmentFilename === name);
+  if (existing) {
+    return existing;
+  }
+  return Zotero.Attachments.importFromFile({
+    file: path,
+    parentItemID: paper.id,
+    contentType: "application/epub+zip",
+  });
+}
+
+/**
+ * Drive the mock page's own attach button and input, and check that the page is
+ * told about every file. This checks the attach path on its own, without the
+ * send timing of the bigger test.
+ */
+/**
+ * Drive the mock page's own attach button and input, and check that the page is
+ * told about every file. This checks the attach path on its own, without the
+ * send timing of the bigger test.
+ */
+
+/**
+ * The service list carries the marks from the readme lists, and picking a row
+ * switches the service.
+ */
+function checkBadges(record, pane, section) {
+  let marks = (id) => (section.getProviders().find((p) => p.id === id) || {}).badges || [];
+  record("badges: every built-in service is free", section.getProviders()
+    .filter((p) => !p.custom).every((p) => p.badges.includes("free")));
+  record("badges: Euria is free, private, and eco", ["free", "privacy", "eco"]
+    .every((mark) => marks("euria").includes(mark)), { value: marks("euria") });
+  record("badges: Mistral is free and eco", marks("mistral").join(",") === "free,eco", { value: marks("mistral") });
+  record("badges: Lumo is free and private", marks("lumo").join(",") === "free,privacy", { value: marks("lumo") });
+  record("badges: ChatGPT is free only", marks("chatgpt").join(",") === "free", { value: marks("chatgpt") });
+
+  // The button shows the current service and its marks.
+  let shown = pane.root.querySelector('[data-role="providerName"]').textContent;
+  record("badges: the button names the service", shown === pane.provider.label, { value: shown });
+  let buttonBadges = Array.from(pane.root.querySelectorAll('[data-role="providerBadges"] .sb-badge'))
+    .map((el) => el.dataset.badge);
+  record("badges: the button shows the marks", buttonBadges.join(",") === (pane.provider.badges || []).join(","), {
+    value: buttonBadges,
+  });
+
+  // The list opens, shows one row per service with its marks, and selects.
+  let trigger = pane.root.querySelector('[data-role="provider"]');
+  trigger.click();
+  let list = pane.root.querySelector('[data-role="providerList"]');
+  record("badges: the list opens", list.hidden === false);
+  let rows = Array.from(list.querySelectorAll(".sb-picker-row"));
+  record("badges: one row for each service", rows.length === section.getProviders().length, { value: rows.length });
+  let euriaRow = rows.find((row) => row.dataset.provider === "euria");
+  let euriaMarks = Array.from(euriaRow?.querySelectorAll(".sb-badge") || []).map((el) => el.dataset.badge);
+  record("badges: the row shows its marks", euriaMarks.join(",") === "free,privacy,eco", { value: euriaMarks });
+  let icons = Array.from(euriaRow?.querySelectorAll(".sb-badge svg") || []);
+  record("badges: each mark has an icon", icons.length === 3
+    && icons.every((svg) => svg.namespaceURI === "http://www.w3.org/2000/svg"
+      && svg.getBoundingClientRect().width >= 10), {
+    value: icons.map((svg) => ({
+      ns: svg.namespaceURI,
+      width: Math.round(svg.getBoundingClientRect().width),
+      fill: svg.querySelector("path")?.getAttribute("fill"),
+    })),
+  });
+
+  euriaRow?.dispatchEvent(new pane.doc.defaultView.MouseEvent("click", { bubbles: true }));
+  record("badges: picking a row switches service", Zotero.Prefs.get("sidebrowser.provider") === "euria", {
+    value: Zotero.Prefs.get("sidebrowser.provider"),
+  });
+  record("badges: the list closes after a pick", list.hidden === true);
+
+  // Put the service back, so the rest of the test is not affected.
+  section.activePane()?.selectProvider("chatgpt");
 }

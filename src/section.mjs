@@ -21,9 +21,10 @@
  */
 
 import { PaneCSS, paneMarkup } from "./ui/styles.mjs";
+import { badgeElements } from "./ui/icons.mjs";
 import { buildScope, loadOptions, saveOption } from "./scope.mjs";
 import { KINDS, buildPackage, contextText, describeOptions } from "./package.mjs";
-import { DEFAULT_PROVIDERS, findProvider, loadCustomProviders } from "./providers/registry.mjs";
+import { DEFAULT_PROVIDERS, applyBadges, findProvider, loadCustomProviders } from "./providers/registry.mjs";
 import { getPref, setPref } from "./prefs.mjs";
 import * as multi from "./multi.mjs";
 
@@ -51,26 +52,22 @@ let sectionKey = null;
 let providers = [];
 
 // ---------------------------------------------------------------------------
-// Notifications
+// Messages to the user
 // ---------------------------------------------------------------------------
 
 /**
- * Tell the user something through Zotero's own progress notification, which
- * shows in a corner of the window and closes by itself.
+ * Tell the user that something failed. A modal dialog is used on purpose: a
+ * progress notification is easy to miss and always in the way, and success needs
+ * no message at all.
  *
  * @param {string} text
- * @param {object} [options]
- * @param {boolean} [options.error]
  */
-export function notify(text, { error = false } = {}) {
+export function showError(text) {
+  let win = Zotero.getMainWindow();
   try {
-    let popup = new Zotero.ProgressWindow({ window: Zotero.getMainWindow(), closeOnClick: true });
-    popup.changeHeadline(error ? "AI sidebar: problem" : "AI sidebar");
-    popup.addDescription(text);
-    popup.show();
-    popup.startCloseTimer(error ? 7000 : 4000);
+    Services.prompt.alert(win, "AI sidebar", String(text || "Something went wrong."));
   } catch (e) {
-    Zotero.debug(`[Side Browser] Could not show a notification: ${e}`);
+    Zotero.debug(`[Side Browser] Could not show a dialog: ${e}`);
   }
 }
 
@@ -151,7 +148,7 @@ export function getSectionKey() {
 
 export function loadProviders() {
   let custom = loadCustomProviders(getPref("customProviders"));
-  providers = [...DEFAULT_PROVIDERS, ...custom];
+  providers = [...applyBadges(DEFAULT_PROVIDERS), ...custom];
   let customURL = getPref("customURL");
   if (getPref("provider") === "custom" && customURL) {
     providers.push({
@@ -162,6 +159,7 @@ export function loadProviders() {
       composerSelectors: ["div[contenteditable='true']", "textarea", "[role='textbox']"],
       sendSelectors: [],
       sendMode: "button-then-enter",
+      attachSelectors: ["button[aria-label*='Attach' i]", "button[aria-label*='Upload' i]"],
       fileSelectors: ["input[type='file'][accept*='pdf']", "input[type='file']"],
       acceptsDocuments: true,
     });
@@ -227,16 +225,19 @@ function renderPane(doc, body) {
     scope: { mode: "none", items: [] },
     selection: null,
     options: loadOptions(),
-    // True after "Insert context to edit": the text is in the message box, so
-    // the text files must not travel a second time.
-    textInserted: false,
+    // The context text the user edited, or null to use the generated text. It
+    // goes in front of their message when a package goes out.
+    editedText: null,
     // Height the user dragged to, or 0 to fill the visible area.
     manualHeight: Number(getPref("paneHeight")) || 0,
     pageInfo: null,
     pageLoaded: false,
   };
 
-  for (let role of ["provider", "overlay", "resizer", "hint", ...KINDS]) {
+  for (let role of [
+    "provider", "providerName", "providerBadges", "providerList",
+    "overlay", "resizer", "hint", "editor", "editbox", ...KINDS,
+  ]) {
     pane.ui[role] = root.querySelector(`[data-role="${role}"]`);
   }
 
@@ -344,6 +345,7 @@ function createPaneApi(pane) {
     start() {
       bindToolbar();
       bindOptions();
+      bindEditor();
       bindActions();
       bindResizer();
       bindBrowser();
@@ -409,6 +411,11 @@ function createPaneApi(pane) {
       return syncPackage();
     },
 
+    /** Re-send the site selectors to the page. */
+    async sync() {
+      await applyAdapter();
+    },
+
     /** The key that names the package for the current papers and options. */
     packageKey,
 
@@ -416,7 +423,7 @@ function createPaneApi(pane) {
       setPref("provider", id);
       pane.providerID = id;
       pane.provider = providerFor(id);
-      ui.provider.value = pane.provider.id;
+      fillProviders();
       navigate(pane.provider.url);
       applyAdapter();
       render();
@@ -433,8 +440,8 @@ function createPaneApi(pane) {
      * @returns {Promise<{files: object[], skipped: object[]}>}
      */
     async packageForPage() {
-      let built = await buildPackage({ ...packageInput(), skipText: pane.textInserted });
-      return built;
+      let built = await buildPackage(packageInput());
+      return { ...built, text: pane.editedText || "" };
     },
 
     /** Called by the page script after it sent a message with files. */
@@ -614,10 +621,14 @@ function createPaneApi(pane) {
         onToolbar(button.dataset.action);
       }
     });
-    on(ui.provider, "change", () => api.selectProvider(ui.provider.value));
+    bindProviderPicker();
   }
 
   function onToolbar(action) {
+    if (action === "provider-list") {
+      toggleProviderList();
+      return;
+    }
     switch (action) {
       case "back":
         command("cmd_goBack");
@@ -717,15 +728,22 @@ function createPaneApi(pane) {
 
   // ------------------------------------------------------------ check boxes
 
+  function bindEditor() {
+    on(ui.editbox, "input", () => {
+      pane.editedText = ui.editbox.value;
+      syncPackage();
+    });
+  }
+
   function bindOptions() {
     for (let kind of KINDS) {
       on(ui[kind], "change", () => {
         pane.options[kind] = ui[kind].checked;
         saveOption(kind, ui[kind].checked);
-        if (TEXT_KINDS.includes(kind) || kind === "annotations") {
-          pane.textInserted = false;
-        }
         render();
+        if (!ui.editor.hidden) {
+          fillEditor();
+        }
         syncPackage();
       });
     }
@@ -868,10 +886,11 @@ function createPaneApi(pane) {
       return;
     }
     let adapter = {
-      composerSelectors: pane.provider.composerSelectors,
-      sendSelectors: pane.provider.sendSelectors,
+      composerSelectors: pane.provider.composerSelectors || [],
+      sendSelectors: pane.provider.sendSelectors || [],
       sendMode: pane.provider.sendMode,
-      fileSelectors: pane.provider.fileSelectors,
+      attachSelectors: pane.provider.attachSelectors || [],
+      fileSelectors: pane.provider.fileSelectors || [],
       url: currentURL(),
     };
     try {
@@ -944,15 +963,13 @@ function createPaneApi(pane) {
    */
   function packageKey() {
     let kinds = activeKinds();
-    if (pane.textInserted) {
-      kinds = kinds.filter((kind) => !TEXT_KINDS.includes(kind));
-    }
     if (!kinds.length) {
       return "";
     }
     let ids = pane.scope.items.map((item) => item.id).join(",");
     let selection = pane.selection?.text ? `${pane.selection.text.length}:${pane.selection.text.slice(0, 24)}` : "";
-    return `${ids}|${kinds.join("+")}|${selection}`;
+    let edited = pane.editedText ? `|edited:${pane.editedText.length}` : "";
+    return `${ids}|${kinds.join("+")}|${selection}${edited}`;
   }
 
   function packageInput() {
@@ -979,51 +996,114 @@ function createPaneApi(pane) {
     }
   }
 
-  /** Tell the user what happened to a message the page sent with files. */
+  /**
+   * The page finished a send. Nothing is reported when all went well, because
+   * the chat page already shows the message. Only a problem is worth a dialog.
+   */
   function reportSent(report) {
-    let lines = [];
-    if (report.attached?.length) {
-      lines.push(`Sent with ${report.attached.length} file${report.attached.length === 1 ? "" : "s"}: ${report.attached.join(", ")}`);
-    } else if (report.sent) {
-      lines.push("Message sent. No files went with it.");
-    }
+    let problems = [];
     for (let miss of report.errors || []) {
-      lines.push(`Could not attach ${miss.name}: ${miss.error}`);
+      problems.push(`Could not attach ${miss.name}: ${miss.error}`);
     }
     for (let miss of report.skipped || []) {
-      lines.push(`Skipped ${truncate(miss.title || "", 40)}: ${miss.reason}`);
+      problems.push(`Skipped ${truncate(miss.title || "", 40)}: ${miss.reason}`);
     }
     if (report.error) {
-      lines.push(report.error);
+      problems.push(report.error);
     }
     if (!report.sent) {
-      lines.push("The page may not have sent the message. Check it.");
+      problems.push("The page may not have sent the message. Check the page.");
     }
-    notify(lines.join("\n"), { error: !report.sent || !!report.errors?.length || !!report.error });
+    if (problems.length) {
+      showError(problems.join("\n"));
+    }
   }
 
   // ---------------------------------------------------------------- Zotero
 
+  /**
+   * Draw the service button and the list, with the marks of each service. A
+   * plain `<select>` cannot show an icon per row, so the list is a listbox.
+   */
   function fillProviders() {
-    let select = ui.provider;
-    if (!select) {
+    if (!ui.providerList) {
       return;
     }
-    select.replaceChildren();
+    ui.providerName.textContent = pane.provider.label;
+    ui.providerBadges.replaceChildren(...badgeElements(doc, pane.provider.badges));
+
+    ui.providerList.replaceChildren();
     for (let provider of providers) {
-      let option = doc.createElementNS("http://www.w3.org/1999/xhtml", "option");
-      option.value = provider.id;
-      option.textContent = provider.label;
-      select.appendChild(option);
+      let row = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      row.className = "sb-picker-row";
+      row.dataset.provider = provider.id;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", provider.id === pane.provider.id ? "true" : "false");
+      row.title = provider.notes || provider.label;
+      if (provider.id === pane.provider.id) {
+        row.classList.add("sb-current");
+      }
+      let name = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+      name.className = "sb-picker-name";
+      name.textContent = provider.label;
+      row.appendChild(name);
+      let marks = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+      marks.className = "sb-picker-badges";
+      marks.append(...badgeElements(doc, provider.badges));
+      row.appendChild(marks);
+      ui.providerList.appendChild(row);
     }
-    select.value = pane.provider.id;
+  }
+
+
+
+  function bindProviderPicker() {
+    on(ui.providerList, "click", (event) => {
+      let row = event.target.closest(".sb-picker-row");
+      if (!row) {
+        return;
+      }
+      closeProviderList();
+      api.selectProvider(row.dataset.provider);
+    });
+
+    // A click anywhere else closes the list, and Escape closes it too.
+    on(doc, "mousedown", (event) => {
+      if (!ui.providerList.hidden && !root.contains(event.target)) {
+        closeProviderList();
+      }
+    }, true);
+    on(doc, "keydown", (event) => {
+      if (event.key === "Escape" && !ui.providerList.hidden) {
+        closeProviderList();
+      }
+    }, true);
+  }
+
+  function toggleProviderList() {
+    if (ui.providerList.hidden) {
+      ui.providerList.hidden = false;
+      ui.provider.setAttribute("aria-expanded", "true");
+      ui.providerList.querySelector(".sb-current")?.scrollIntoView({ block: "nearest" });
+    } else {
+      closeProviderList();
+    }
+  }
+
+  function closeProviderList() {
+    ui.providerList.hidden = true;
+    ui.provider.setAttribute("aria-expanded", "false");
   }
 
   async function refreshScope() {
     let before = pane.scope.items.map((item) => item.id).join(",");
     pane.scope = await buildScope({ doc });
-    if (pane.scope.items.map((item) => item.id).join(",") !== before) {
-      pane.textInserted = false;
+    let after = pane.scope.items.map((item) => item.id).join(",");
+    if (after !== before) {
+      pane.editedText = null;
+      if (!ui.editor.hidden) {
+        await fillEditor();
+      }
     }
     render();
     syncPackage();
@@ -1064,8 +1144,12 @@ function createPaneApi(pane) {
     let anyFile = activeKinds().length > 0;
     let anyText = activeKinds().some((kind) => TEXT_KINDS.includes(kind) || kind === "annotations");
     setDisabled("attach", !anyFile);
-    setDisabled("insert", !anyText);
+    setDisabled("edit", !anyText);
     setDisabled("copy", !anyText);
+    let edit = root.querySelector('button[data-action="edit"]');
+    if (edit) {
+      edit.classList.toggle("sb-active", !ui.editor.hidden);
+    }
   }
 
   function setDisabled(action, disabled) {
@@ -1086,8 +1170,8 @@ function createPaneApi(pane) {
       let action = button.dataset.action;
       if (action === "attach") {
         onAttach();
-      } else if (action === "insert") {
-        onInsert();
+      } else if (action === "edit") {
+        onEdit();
       } else if (action === "copy") {
         onCopy();
       }
@@ -1097,7 +1181,7 @@ function createPaneApi(pane) {
   /** Attach the checked files to the page now, and keep them from going twice. */
   async function onAttach() {
     if (!activeKinds().length) {
-      notify("Check at least one option to attach.", { error: true });
+      showError("Check at least one option to attach.");
       return;
     }
     setDisabled("attach", true);
@@ -1105,73 +1189,72 @@ function createPaneApi(pane) {
       let built = await buildPackage(packageInput());
       let actor = await waitForActor();
       if (!actor) {
-        notify("The page is not ready yet. Wait for it to load.", { error: true });
+        showError("The page is not ready yet. Wait for it to load.");
         return;
       }
-      let lines = [];
+      let problems = [];
       if (built.files.length) {
         let result = await actor.sendQuery("attach", { files: built.files, key: packageKey() });
-        if (result?.attached?.length) {
-          lines.push(`Attached: ${result.attached.join(", ")}`);
-        }
         for (let miss of result?.attachErrors || []) {
-          lines.push(`Could not attach ${miss.name}: ${miss.error}`);
+          problems.push(`Could not attach ${miss.name}: ${miss.error}`);
         }
       }
       for (let miss of built.skipped) {
-        lines.push(`Skipped ${truncate(miss.title || "", 40)}: ${miss.reason}`);
+        problems.push(`Skipped ${truncate(miss.title || "", 40)}: ${miss.reason}`);
       }
-      if (!lines.length) {
-        lines.push("There was nothing to attach.");
+      if (!built.files.length && !problems.length) {
+        problems.push("There was nothing to attach.");
       }
-      notify(lines.join("\n"), { error: !built.files.length || lines.length > 1 });
+      if (problems.length) {
+        showError(problems.join("\n"));
+      }
     } catch (e) {
-      notify(String(e.message || e), { error: true });
+      showError(String(e.message || e));
     } finally {
       render();
     }
   }
 
   /** Put the checked text in the page message box, so the user can edit it. */
-  async function onInsert() {
+  /**
+   * Show the context text in a box so the user can read and change it. The text
+   * is not sent anywhere: it goes in front of the next message, and the button
+   * hides the box again.
+   */
+  async function onEdit() {
+    if (!ui.editor.hidden) {
+      // Hiding keeps whatever was typed; it is sent with the next message.
+      ui.editor.hidden = true;
+      render();
+      return;
+    }
+    await fillEditor();
+    ui.editor.hidden = false;
+    ui.editbox.focus();
+    render();
+  }
+
+  /** Put the current context text in the box, unless the user already changed it. */
+  async function fillEditor() {
     try {
-      let text = await contextText(packageInput());
-      if (!text) {
-        notify("The checked options have no text to insert.", { error: true });
-        return;
-      }
-      let actor = await waitForActor();
-      if (!actor) {
-        await copy(text);
-        notify("The page is not ready. The text is on the clipboard.", { error: true });
-        return;
-      }
-      let result = await actor.sendQuery("insert", { text });
-      if (result?.ok) {
-        // The text is in the box now, so its files must not go out as well.
-        pane.textInserted = true;
-        syncPackage();
-        notify("Context placed in the message box. Edit it, then send.");
-      } else {
-        await copy(text);
-        notify("No message box found on the page. The text is on the clipboard.", { error: true });
-      }
+      let text = pane.editedText ?? (await contextText(packageInput()));
+      ui.editbox.value = text;
     } catch (e) {
-      notify(String(e.message || e), { error: true });
+      ui.editbox.value = "";
+      Zotero.debug(`[Side Browser] Could not build the context text: ${e}`);
     }
   }
 
   async function onCopy() {
     try {
-      let text = await contextText(packageInput());
+      let text = pane.editedText ?? (await contextText(packageInput()));
       if (!text) {
-        notify("The checked options have no text to copy.", { error: true });
+        showError("The checked options have no text to copy.");
         return;
       }
       await copy(text);
-      notify("Context copied to the clipboard.");
     } catch (e) {
-      notify(String(e.message || e), { error: true });
+      showError(String(e.message || e));
     }
   }
 
@@ -1331,7 +1414,7 @@ export function useSelection(annotation, reader, win) {
   };
   pane.options.selection = true;
   saveOption("selection", true);
-  pane.textInserted = false;
+  pane.editedText = null;
   api.refreshScope().then(() => api.reveal());
   return true;
 }

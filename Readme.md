@@ -44,32 +44,87 @@ paying the Big Techs.
 
 ## Features
 
-- No API key and no subscription. You use the free web chats that you already
-  have an account for, and the site's own limits apply.
-- A real pane in Zotero's right column, with its own icon in the strip next to
-  Info, Abstract, and Tags. It follows the light and dark theme.
-- Your papers go with your message. You type in the chat page as usual, and when
-  you press send the plugin attaches the files you chose.
+- No API key and no subscription. You use the free web chats you already have an
+  account for, and the site's own limits apply.
+- One pane in Zotero's right column, with its own icon in the strip next to Info,
+  Abstract, and Tags. It follows the light and dark theme.
+- Twelve services ready to use: ChatGPT, Claude, DeepSeek, Mistral Le Chat,
+  Gemini, Perplexity, Euria, Ecosia AI, Lumo, Duck.ai, Brave Leo, and Venice, plus
+  any other chat page through a custom URL.
+- Your papers go with your message. You type in the chat page as usual, and the
+  plugin attaches the files when you press send.
 - Five choices of what to attach: paper metadata, the text you selected, your
   annotations, the PDF, and other attachments such as an EPUB.
 - Real files, not pasted text. The chat sees the real PDF with its figures, and
   your message box stays clean.
+- Attaching uses the site's own attach button and file input, then a drop on the
+  message box, so it works even where a site builds its input on demand.
 - Works in the library and in the reader. Select text in a PDF, click "Ask about
   this", and the selection travels with your next message.
 - Works on many papers at once. Select several, click the icon in the strip, and
   ask about all of them.
-- Edit before you send. "Insert context to edit" puts the text in the message box,
-  and "Copy context" puts it on the clipboard.
-- Tall by default and resizable. The pane fills the window height, follows the
-  window, and has a drag bar and zoom buttons.
-- Remembers where you were. Your login stays, and a new tab reopens the last chat
+- Edit before you send. "Edit context" shows the text in a box, and "Copy context"
+  puts it on the clipboard.
+- Tall by default and resizable, with a drag bar under the page, and zoom out and
+  zoom in buttons that remember your choice.
+- Remembers where you were. Your login stays, and a new tab reopens the last
   address you visited, which is usually your last conversation.
-- Your choice of service: ChatGPT, Claude, DeepSeek, Mistral, or any chat page
-  with a custom URL and your own selectors.
-- Clear messages. What was attached, and what went wrong, shows as a Zotero
-  notification instead of text hidden at the bottom of the pane.
-- Private by design. Files go only to the chat page that you chose. The plugin
-  has no server of its own.
+- Quiet. Nothing is reported when all goes well, and a problem opens one dialog.
+
+## What the pane sends
+
+Under the page, the list "Attach on send" has five check boxes. Each one adds
+files:
+
+- Paper metadata: a small Markdown file with the title, authors, venue, DOI, and
+  abstract of each paper.
+- Selected text: a Markdown file with the text you selected in the reader.
+- Annotations: a Markdown file with the highlights and comments of the PDF, plus
+  the picture of each image annotation.
+- PDF file: the real PDF of each paper.
+- Other attachments: the other attachments of the paper that exist as local
+  files, such as an EPUB or a Word file. Each one must be under 30 MB.
+
+A text file that a site will not take as Markdown is offered again as plain text,
+and then as a small PDF, so a chat that reads only documents still gets the words.
+
+Three buttons sit under the list:
+
+- Attach files attaches the checked files now, so the site uploads them early.
+  They do not go out a second time with your next message.
+- Edit context shows the context text in a box, to read and change it. Your
+  changes go in front of your next message. Press the button again to hide the
+  box.
+- Copy context puts the same text on the clipboard.
+
+When you press the page's send button, or Enter in its message box, the plugin
+stops that send, attaches the checked files, waits for the upload, and sends your
+message. The files travel once for each choice of papers and boxes. Pick another
+paper, or change a box, and the next message carries the new files.
+
+## Browser controls
+
+The toolbar has back, forward, reload, the service list, zoom out, zoom in, and a
+button that opens the page in your system browser. Drag the bar under the page to
+change its height, and double-click the bar to fill the window again.
+
+## Marks next to each service
+
+The service list shows a mark next to each name, taken from the three lists at the
+top of this page:
+
+- A present in gold: free to use. Every service here has it.
+- A mask in teal: a privacy-respecting policy.
+- A leaf in green: powered by climate-aware energy.
+
+Hover a mark to read what it means. The three colours are chosen to stay legible
+on both the light and the dark Zotero theme.
+
+## Adding a service
+
+`Zotero.SideBrowser.probe()` in the error console describes the page in the open
+pane: its message boxes, the buttons around them, and its file inputs. Copy the
+selectors into an entry in `src/providers/registry.mjs`.
 
 ## Install
 

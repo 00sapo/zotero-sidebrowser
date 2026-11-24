@@ -173,3 +173,37 @@ found, and which file inputs the page accepts.
   at 100%, so the pane applies the saved zoom after every load.
 - A pointer capture on the resize handle keeps the move events coming while the
   pointer is over the browser, which swallows plain mouse events.
+
+## Attaching a file
+
+- Try the site first: click its attach button (the `attachSelectors` of the
+  provider), wait, then fill the file input it created. Several sites, Gemini for
+  one, build that input only when the button opens the menu.
+- Fill one file per change event, wait between files, and click the attach button
+  again for the next file, because the menu closes.
+- The File object must come from the page's own window, or the page cannot read
+  it. The window that owns the current document is `this.document.defaultView`;
+  a cached `contentWindow` can belong to the previous page.
+- Fall back to a paste, then to a drag and drop. A synthetic drop is ignored by
+  most sites, and a paste is only used when the page takes the event.
+- The upload needs time before the message is sent. Even a page that shows no
+  progress needs about one and a half seconds per file.
+
+## The edit box
+
+- The pane sends the checked files. Text files exist only for pages that need
+  them, and the edit box holds the same text, so the user can change the words
+  that go in front of the message without a file.
+- A change of papers, or of a check box, resets the edited text.
+
+## Marks next to a service
+
+- Zotero's pane parses markup with `MozXULElement.parseXULToFragment`, and neither
+  that parser nor `innerHTML` produces a working `<svg>` there. The icon is built
+  with `createElementNS` in the SVG namespace instead.
+- The fill colour is written into the path, because a stylesheet cannot reach
+  inside the icon across the XUL boundary in this pane.
+- The colours keep about three to one contrast on the light pane (#f2f2f2) and on
+  the dark pane (#303030): gold #9c7200, teal #0c8599, green #2b8a3e.
+- A `<select>` cannot show an icon per row, so the service list is a button and a
+  listbox drawn by the pane.

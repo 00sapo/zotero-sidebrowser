@@ -51,17 +51,118 @@ export const PaneCSS = `
   cursor: default;
 }
 
-.sb-root .sb-provider {
+.sb-root .sb-picker {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.sb-root .sb-picker-button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
   height: 22px;
-  padding: 0 3px;
+  padding: 0 4px;
   border: 1px solid var(--fill-quinary, rgba(0, 0, 0, 0.2));
   border-radius: 4px;
   background: var(--material-background, #fff);
   color: inherit;
   font: inherit;
   font-size: 12px;
+  cursor: pointer;
+}
+
+.sb-root .sb-picker-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-root .sb-picker-badges {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  opacity: 0.85;
+}
+
+.sb-root .sb-picker-mark {
+  flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: 10px;
+}
+
+.sb-root .sb-picker-list {
+  position: absolute;
+  z-index: 20;
+  top: 24px;
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 3px;
+  border: 1px solid var(--fill-tertiary, rgba(0, 0, 0, 0.25));
+  border-radius: 5px;
+  background: var(--material-menu, var(--material-background, #fff));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.sb-root .sb-picker-list[hidden] {
+  display: none;
+}
+
+.sb-root .sb-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sb-root .sb-picker-row:hover,
+.sb-root .sb-picker-row.sb-current {
+  background: var(--fill-quinary, rgba(0, 0, 0, 0.08));
+}
+
+.sb-root .sb-picker-row .sb-picker-name {
+  flex: 0 1 auto;
+}
+
+/* The marks. Every glyph draws with currentColor, so it follows the theme. */
+.sb-root .sb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.sb-root .sb-badge svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* The marks are icons. The words are there for a screen reader, and the meaning
+   is in the tooltip, so the service names keep their room. */
+.sb-root .sb-badge-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.sb-root .sb-picker-row .sb-picker-badges {
+  margin-left: auto;
 }
 
 /* The page gets all the space that is left, and keeps a usable height on a
@@ -190,6 +291,40 @@ export const PaneCSS = `
   cursor: pointer;
 }
 
+.sb-root .sb-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 6px;
+  flex: 0 0 auto;
+}
+
+.sb-root .sb-editor[hidden] {
+  display: none;
+}
+
+.sb-root textarea.sb-context-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 90px;
+  max-height: 320px;
+  resize: vertical;
+  padding: 4px 5px;
+  border: 1px solid var(--fill-quinary, rgba(0, 0, 0, 0.2));
+  border-radius: 4px;
+  background: var(--material-background, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.sb-root .sb-editor-hint {
+  font-size: 10px;
+  font-style: italic;
+  color: var(--fill-secondary, rgba(0, 0, 0, 0.62));
+}
+
 .sb-root .sb-actions button.sb-primary {
   background: var(--accent-blue, #4072e5);
   border-color: transparent;
@@ -246,7 +381,15 @@ export function paneMarkup() {
   <html:button type="button" data-action="back" title="Back" aria-label="Back">&#8592;</html:button>
   <html:button type="button" data-action="forward" title="Forward" aria-label="Forward">&#8594;</html:button>
   <html:button type="button" data-action="reload" title="Reload" aria-label="Reload">&#8635;</html:button>
-  <html:select class="sb-provider" data-role="provider" title="AI service"></html:select>
+  <html:div class="sb-picker" data-role="picker">
+    <html:button type="button" class="sb-picker-button" data-role="provider" data-action="provider-list"
+                 title="AI service" aria-haspopup="listbox" aria-expanded="false">
+      <html:span class="sb-picker-name" data-role="providerName"></html:span>
+      <html:span class="sb-picker-badges" data-role="providerBadges"></html:span>
+      <html:span class="sb-picker-mark" aria-hidden="true">&#9662;</html:span>
+    </html:button>
+    <html:div class="sb-picker-list" data-role="providerList" role="listbox" hidden="true"></html:div>
+  </html:div>
   <html:button type="button" data-action="zoomout" title="Zoom out" aria-label="Zoom out">&#8722;</html:button>
   <html:button type="button" data-action="zoomin" title="Zoom in" aria-label="Zoom in">&#43;</html:button>
   <html:button type="button" data-action="external" title="Open in the system browser" aria-label="Open in the system browser">&#8599;</html:button>
@@ -269,9 +412,15 @@ export function paneMarkup() {
   ${checks}
 </html:div>
 
+<html:div class="sb-editor" data-role="editor" hidden="true">
+  <html:textarea class="sb-context-text" data-role="editbox" rows="6"
+                 placeholder="The context text goes here."></html:textarea>
+  <html:div class="sb-editor-hint">This text goes in front of your message when you send.</html:div>
+</html:div>
+
 <html:div class="sb-actions">
   <html:button type="button" data-action="attach" title="Attach the checked files to the page now">Attach files</html:button>
-  <html:button type="button" class="sb-primary" data-action="insert" title="Put the checked text in the page message box so you can edit it">Insert context to edit</html:button>
+  <html:button type="button" class="sb-primary" data-action="edit" title="Show the context text, to read and change it">Edit context</html:button>
   <html:button type="button" data-action="copy" title="Copy the checked text to the clipboard">Copy context</html:button>
 </html:div>
 `;

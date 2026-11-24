@@ -39,6 +39,17 @@ export class SideBrowserChild extends JSWindowActorChild {
     this._busy = false;
   }
 
+  /**
+   * The window that owns the current document. A cached `contentWindow` can
+   * point at the previous page after a navigation, and events made there never
+   * reach the new page.
+   *
+   * @returns {Window}
+   */
+  get win() {
+    return this.document?.defaultView || this.contentWindow;
+  }
+
   /** Forward a debug line to the parent, which can reach Zotero.debug. */
   _log(message) {
     try {
@@ -78,6 +89,8 @@ export class SideBrowserChild extends JSWindowActorChild {
         return this._insertOnly(data.text);
       case "attach":
         return this._attachOnly(data.files || [], data.key);
+      case "attach-now":
+        return this._attachFiles(data.files || []);
       case "compose":
         return this._compose(data);
       case "prepare":
@@ -130,7 +143,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     let sameDocument = false;
     try {
       let target = new URL(href);
-      let current = new URL(this.contentWindow.location.href);
+      let current = new URL(this.win.location.href);
       sameDocument = target.origin === current.origin
         && target.pathname === current.pathname
         && target.search === current.search;
@@ -188,15 +201,29 @@ export class SideBrowserChild extends JSWindowActorChild {
       }
       let files = pkg?.files || [];
       report.skipped = pkg?.skipped || [];
+
+      // Text edited in the pane goes in front of what the user typed in the page.
+      let composer = this._findComposer();
+      let edited = String(pkg?.text || "").trim();
+      if (edited && composer) {
+        let typed = this._composerText(composer).trim();
+        this._insertText(composer, typed ? `${edited}\n\n${typed}` : edited);
+        await this._delay(200);
+      }
       if (files.length) {
         let outcome = await this._attachFiles(files);
         report.attached = outcome.attached;
         report.errors = outcome.attachErrors;
+        // Every page needs time after the last file, even one that shows no
+        // upload progress. Sending too early loses the file and the message.
+        await this._delay(UPLOAD_MIN_WAIT_MS);
         if (outcome.attached.length) {
           await this._waitForUpload();
         }
       }
-      // Mark before sending, so a second click cannot attach the same files.
+      // Mark before sending, so a second click cannot attach the same files, and
+      // so a package that was just attached is not attached again on the next
+      // message.
       this._sentKey = key;
       report.sent = await this._send();
     } catch (e) {
@@ -212,7 +239,10 @@ export class SideBrowserChild extends JSWindowActorChild {
    * back, with a limit so a stuck upload does not block the message.
    */
   async _waitForUpload() {
+    // An upload starts a moment after the file is handed over. Without this wait
+    // the page sends the message before the site has taken the file.
     await this._delay(UPLOAD_MIN_WAIT_MS);
+    await this._delay(2000);
     let mode = this._adapter?.sendMode || "button-then-enter";
     if (mode === "enter") {
       await this._delay(1500);
@@ -241,7 +271,7 @@ export class SideBrowserChild extends JSWindowActorChild {
   _prepare() {
     let doc = this.document;
     return {
-      url: this.contentWindow.location.href,
+      url: this.win.location.href,
       title: doc.title,
       readyState: doc.readyState,
       hasComposer: !!this._findComposer(),
@@ -277,7 +307,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     let doc = this.document;
     if (doc.readyState !== "complete") {
       await new Promise((resolve) => {
-        this.contentWindow.addEventListener("load", resolve, { once: true });
+        this.win.addEventListener("load", resolve, { once: true });
       });
     }
     let composer = this._findComposer();
@@ -370,7 +400,7 @@ export class SideBrowserChild extends JSWindowActorChild {
   }
 
   _delay(ms) {
-    return new Promise((resolve) => this.contentWindow.setTimeout(resolve, ms));
+    return new Promise((resolve) => this.win.setTimeout(resolve, ms));
   }
 
   // -------------------------------------------------------------------------
@@ -402,141 +432,226 @@ export class SideBrowserChild extends JSWindowActorChild {
   async _attachFiles(files) {
     let attached = [];
     let attachErrors = [];
-    let groups = new Map();
-    let leftovers = [];
 
-    for (let spec of files) {
-      let picked = this._pickInput(spec);
-      if (!picked) {
-        leftovers.push(spec);
-        continue;
-      }
-      let list = groups.get(picked.input) || [];
-      list.push(picked.file);
-      groups.set(picked.input, list);
+    // Order of attempts, best first:
+    //   1. Click the site's own attach button, then fill the file input it
+    //      creates. This is what the site's own code runs, so it sticks.
+    //   2. Fill a file input that is already on the page.
+    //   3. Paste the files, for a site with neither.
+    // A synthetic drop is deliberately last, because most sites ignore one.
+    let inputsBefore = this._allFileInputs();
+
+    if (!inputsBefore.length) {
+      this._clickAttachButton();
+      await this._delay(700);
     }
 
-    for (let [input, list] of groups) {
-      let batches = input.hasAttribute("multiple") ? [list] : list.map((file) => [file]);
-      for (let i = 0; i < batches.length; i++) {
-        try {
-          this._assignFiles(input, batches[i]);
-          attached.push(...batches[i].map((file) => file.name));
-        } catch (e) {
-          for (let file of batches[i]) {
+    let inputs = this._allFileInputs();
+    let remaining = files;
+
+    if (inputs.length) {
+      // One entry per file, in order, so two files for the same input are both
+      // kept. A map keyed by the input would hold only the last one.
+      let plan = [];
+      let leftovers = [];
+      for (let spec of files) {
+        let picked = this._pickInput(spec, inputs);
+        if (!picked) {
+          leftovers.push(spec);
+          continue;
+        }
+        plan.push({ ...picked, spec });
+      }
+      // One file per change. A page reads `input.files` when the change event
+      // fires, so several files in one go can be lost, and the next change needs a
+      // moment for the page to notice the upload.
+      {
+        let first = true;
+        for (let { file, spec } of plan) {
+          if (!first) {
+            // A site that creates its input from a menu closes that menu after one
+            // file, so open it again for the next one.
+            this._clickAttachButton();
+            await this._delay(600);
+          }
+          first = false;
+          // The input may be a new element, so look it up again for each file.
+          let live = this._pickInput(spec, this._allFileInputs());
+          let target = live?.input || null;
+          if (!target) {
+            attachErrors.push({ name: file.name, error: "the page closed its file input" });
+            continue;
+          }
+          try {
+            this._assignFiles(target, [file]);
+            attached.push(file.name);
+            // Keep the files in the input. Clearing it would make a page that
+            // reads the input at send time copy the files out twice.
+
+          } catch (e) {
             attachErrors.push({ name: file.name, error: String(e) });
           }
-        }
-        if (i < batches.length - 1) {
-          await this._delay(1200);
+          await this._delay(2500);
         }
       }
+      remaining = leftovers;
     }
 
-    // Some pages, Gemini for one, create the file input only when a menu opens,
-    // and some inputs refuse the type. Pasting the files into the message box is
-    // the way a person would attach them without that menu.
-    if (leftovers.length) {
-      let outcome = this._attachByPaste(leftovers);
-      attached.push(...outcome.attached);
-      attachErrors.push(...outcome.attachErrors);
+    if (remaining.length) {
+      let pasted = this._attachByPaste(remaining);
+      attached.push(...pasted.attached);
+      remaining = remaining.filter((spec) => !pasted.attached.includes(spec.name));
+    }
+
+    if (remaining.length) {
+      let dropped = await this._attachByDrop(remaining);
+      attached.push(...dropped.attached);
+      for (let spec of dropped.failed) {
+        attachErrors.push({ name: spec.name, error: "the page did not take the file" });
+      }
     }
     return { attached, attachErrors };
   }
 
   /**
-   * Hand files to the page the way a paste or a drop would. A site that takes
-   * pasted files calls `preventDefault`, which tells us the paste was used. If
-   * not, a drop on the message box is tried next.
+   * Click the site's attach button, so it builds or unlocks its file input. The
+   * event is a real click, which is the only kind these sites act on.
+   */
+  _clickAttachButton() {
+    for (let selector of this._adapter?.attachSelectors || []) {
+      let candidates;
+      try {
+        candidates = this.document.querySelectorAll(selector);
+      } catch (e) {
+        continue;
+      }
+      for (let el of candidates) {
+        if (this._isClickable(el)) {
+          el.click();
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Paste the files into the message box. A site that takes pasted files calls
+   * `preventDefault`, which tells us the paste was used.
    *
    * @param {object[]} specs
-   * @returns {{attached: string[], attachErrors: object[]}}
+   * @returns {{attached: string[]}}
    */
   _attachByPaste(specs) {
     let win = this.contentWindow;
     let composer = this._findComposer();
     if (!composer) {
-      return {
-        attached: [],
-        attachErrors: specs.map((spec) => ({ name: spec.name, error: "no file input and no message box" })),
-      };
+      return { attached: [] };
     }
     try {
       let dt = new win.DataTransfer();
       for (let spec of specs) {
-        dt.items.add(this._makeFile(spec));
+        dt.items.add(this._makeFile(this._forThisPage(spec)));
       }
       composer.focus();
       let paste = new win.ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt });
       composer.dispatchEvent(paste);
-      if (!paste.defaultPrevented) {
-        let target = composer.closest("form") || composer.parentElement || composer;
-        for (let type of ["dragenter", "dragover", "drop"]) {
-          target.dispatchEvent(new win.DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
-        }
-      }
-      return { attached: specs.map((spec) => spec.name), attachErrors: [] };
+      return { attached: paste.defaultPrevented ? specs.map((spec) => spec.name) : [] };
     } catch (e) {
-      return {
-        attached: [],
-        attachErrors: specs.map((spec) => ({ name: spec.name, error: String(e) })),
-      };
+      return { attached: [] };
     }
-  }
-
-  _assignFiles(input, fileObjects) {
-    let win = this.contentWindow;
-    let dt = new win.DataTransfer();
-    for (let file of fileObjects) {
-      dt.items.add(file);
-    }
-    input.files = dt.files;
-    input.dispatchEvent(new win.Event("input", { bubbles: true }));
-    input.dispatchEvent(new win.Event("change", { bubbles: true }));
   }
 
   /**
-   * The first file input that accepts this file. A text file that no input takes
-   * as Markdown gets a second try as plain text.
+   * Drag the files onto the message box. Most sites ignore a synthetic drop, so
+   * this runs only when the page offers no file input and no paste handler.
+   *
+   * @param {object[]} specs
+   * @returns {Promise<{attached: string[], failed: object[]}>}
    */
-  _pickInput(spec) {
-    let inputs = this._allFileInputs();
-    let isText = typeof spec.text === "string";
-    let variants = [spec];
-    if (isText && spec.type !== "text/plain") {
-      variants.push({
-        ...spec,
-        name: spec.name.replace(/\.[^.]+$/, "") + ".txt",
-        type: "text/plain",
+  async _attachByDrop(specs) {
+    let win = this.contentWindow;
+    let composer = this._findComposer();
+    if (!composer) {
+      return { attached: [], failed: specs };
+    }
+    let target = composer.closest("form") || composer;
+    let names = specs.map((spec) => spec.name);
+    let files = [];
+    let failed = [];
+    for (let spec of specs) {
+      try {
+        files.push(this._makeFile(this._forThisPage(spec)));
+      } catch (e) {
+        failed.push(spec);
+      }
+    }
+    if (!files.length) {
+      return { attached: [], failed };
+    }
+
+    let dt = new win.DataTransfer();
+    for (let file of files) {
+      dt.items.add(file);
+    }
+    // A drop must report at least one file on the drag, so the site knows that
+    // files are coming and not a piece of text.
+    dt.effectAllowed = "all";
+
+    let fire = (type, extra = {}) => {
+      let event = new win.DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        dataTransfer: dt,
+        ...extra,
       });
+      target.dispatchEvent(event);
+      return event;
+    };
+
+    fire("dragenter", { button: 0, buttons: 1 });
+    await this._delay(120);
+    fire("dragover", { button: 0, buttons: 1 });
+    await this._delay(120);
+    fire("drop", { button: 0 });
+    // Some pages listen on the page itself, not on the box.
+    if (target !== this.document.body) {
+      this.document.body.dispatchEvent(new win.DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dt,
+      }));
     }
-    for (let variant of variants) {
-      for (let input of inputs) {
-        if (this._accepts(input, variant.name, variant.type)) {
-          return { input, file: this._makeFile(variant) };
-        }
-      }
+    await this._delay(120);
+    fire("dragend");
+    return { attached: names.filter((name) => !failed.some((spec) => spec.name === name)), failed };
+  }
+
+  /**
+   * Text travels as a PDF when the page has a file input that takes documents but
+   * no text. Sites that check the `accept` list, such as Gemini for its hidden
+   * input, then accept the words as a small document.
+   *
+   * @param {object} spec
+   * @returns {object}
+   */
+  _forThisPage(spec) {
+    if (!spec.twinPDF || typeof spec.text !== "string") {
+      return spec;
     }
-    // Some pages take PDFs and images only. A text file then travels as a small
-    // PDF, which the site reads as text.
-    if (isText) {
-      let name = spec.name.replace(/\.[^.]+$/, "") + ".pdf";
-      for (let input of inputs) {
-        if (this._accepts(input, name, "application/pdf")) {
-          return {
-            input,
-            file: this._makeFile({ name, type: "application/pdf", data: this._textToPdf(spec.text) }),
-          };
-        }
-      }
+    let inputs = this._allFileInputs();
+    if (!inputs.length) {
+      return spec;
     }
-    return null;
+    let takesText = inputs.some((input) => this._accepts(input, spec.name, "text/markdown"));
+    let takesPdf = inputs.some((input) => this._accepts(input, "x.pdf", "application/pdf"));
+    return takesPdf && !takesText ? { ...spec, asPdf: true } : spec;
   }
 
   /**
    * Turn plain text into a small PDF with Helvetica text on letter pages. Only
-   * Latin-1 characters survive, and the rest become "?". The text stays
-   * selectable, so a service that reads PDFs gets all of it.
+   * Latin-1 characters survive, and the rest become "?".
    *
    * @param {string} text
    * @returns {string} The PDF as a binary string.
@@ -580,8 +695,6 @@ export class SideBrowserChild extends JSWindowActorChild {
       return code < 256 ? `\\${code.toString(8).padStart(3, "0")}` : "?";
     }).join("");
 
-    // Objects 1 to 3 are the catalog, the page list, and the font. Each page
-    // then takes two: the page itself and its content stream.
     let objects = [
       "<< /Type /Catalog /Pages 2 0 R >>",
       `<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + 2 * i} 0 R`).join(" ")}] /Count ${pages.length} >>`,
@@ -610,12 +723,84 @@ export class SideBrowserChild extends JSWindowActorChild {
     return out;
   }
 
-  _makeFile(spec) {
+  /**
+   * Hand files to an input the way a file dialog does.
+   *
+   * The change event must be fired through the input's own constructor from the
+   * page's realm, because a page that wraps `addEventListener` or compares
+   * `event.target` created in another compartment can miss it.
+   */
+  _assignFiles(input, fileObjects) {
     let win = this.contentWindow;
+    let dt = new win.DataTransfer();
+    for (let file of fileObjects) {
+      dt.items.add(file);
+    }
+    input.files = dt.files;
+
+    let fire = (type) => {
+      let event;
+      try {
+        event = new win.Event(type, { bubbles: true, cancelable: true, composed: true });
+      } catch (e) {
+        event = this.document.createEvent("Event");
+        event.initEvent(type, true, true);
+      }
+      input.dispatchEvent(event);
+    };
+    fire("input");
+    fire("change");
+  }
+
+  /**
+   * The first file input that accepts this file. A text file that no input takes
+   * as Markdown gets a second try as plain text.
+   */
+  _pickInput(spec, inputs = this._allFileInputs()) {
+    let isText = typeof spec.text === "string";
+    let variants = [spec];
+    if (isText && spec.type !== "text/plain") {
+      variants.push({
+        ...spec,
+        name: spec.name.replace(/\.[^.]+$/, "") + ".txt",
+        type: "text/plain",
+      });
+    }
+    for (let variant of variants) {
+      for (let input of inputs) {
+        if (this._accepts(input, variant.name, variant.type)) {
+          try {
+            return { input, file: this._makeFile(variant) };
+          } catch (e) {
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  _makeFile(spec) {
+    // The File must come from the page's own window, or the page cannot read it.
+    let win = this.contentWindow;
+    if (spec.asPdf && typeof spec.text === "string") {
+      // A page that takes documents only gets the same words as a PDF.
+      return new win.File([this._toBytes(this._textToPdf(spec.text))], spec.name.replace(/\.[^.]+$/, "") + ".pdf", {
+        type: "application/pdf",
+      });
+    }
     if (typeof spec.text === "string") {
       return new win.File([spec.text], spec.name, { type: spec.type });
     }
-    return new win.File([this._toBytes(spec.data)], spec.name, { type: spec.type });
+    let data = spec.data;
+    if (typeof data !== "string") {
+      data = "";
+    }
+    try {
+      let bytes = this._toBytes(data);
+      return new win.File([bytes], spec.name, { type: spec.type });
+    } catch (e) {
+      throw e;
+    }
   }
 
   /**
@@ -718,7 +903,7 @@ export class SideBrowserChild extends JSWindowActorChild {
   async _pressEnter() {
     let composer = this._findComposer();
     let target = composer || this.document.activeElement || this.document.body;
-    let win = this.contentWindow;
+    let win = this.win;
     let init = {
       key: "Enter",
       code: "Enter",
@@ -803,7 +988,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     if (rect.width === 0 && rect.height === 0) {
       return false;
     }
-    let style = this.contentWindow.getComputedStyle(el);
+    let style = this.win.getComputedStyle(el);
     return style.visibility !== "hidden" && style.display !== "none";
   }
 
@@ -843,7 +1028,7 @@ export class SideBrowserChild extends JSWindowActorChild {
     )).filter((el) => this._isUsable(el));
 
     let result = {
-      url: this.contentWindow.location.href,
+      url: this.win.location.href,
       title: doc.title,
       composers: boxes.slice(0, 6).map(describe),
       sendButtons: [],
@@ -950,6 +1135,8 @@ export class SideBrowserChild extends JSWindowActorChild {
     return { ok: true };
   }
 
+
+
   _readMockState() {
     // Read the live window through the browsing context: a cached reference can
     // point at the previous document after a navigation.
@@ -960,23 +1147,34 @@ export class SideBrowserChild extends JSWindowActorChild {
     } catch (e) {
       received = [];
     }
-    let pasted = [];
+    let dropped = [];
+    let picked = [];
     try {
-      pasted = win?.wrappedJSObject?.__pasted || [];
+      dropped = win?.wrappedJSObject?.__dropped || [];
+      picked = win?.wrappedJSObject?.__picked || [];
     } catch (e) {
-      pasted = [];
+      dropped = [];
     }
     return {
       messages: received.length,
       received,
-      pasted,
+      dropped,
+      busy: this._busy,
+      picked: picked.map((f) => f.name),
+      directSaw: (() => {
+        try {
+          return win?.wrappedJSObject?.__directSaw ?? null;
+        } catch (e) {
+          return "unreadable";
+        }
+      })(),
       pending: this._pending(),
       log: this.document.getElementById("log")?.textContent || "",
     };
   }
 
   _selectAllText() {
-    let win = this.contentWindow;
+    let win = this.win;
     let range = this.document.createRange();
     range.selectNodeContents(this.document.body);
     let selection = win.getSelection();
