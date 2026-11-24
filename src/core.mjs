@@ -413,6 +413,18 @@ export const api = {
     return pane.ask(text, options);
   },
 
+  /**
+   * Describe the page in the active pane: its message boxes, the buttons around
+   * them, and its file inputs. Use it to write selectors for a custom provider.
+   */
+  async probe(options) {
+    let pane = section().activePane();
+    if (!pane) {
+      throw new Error("No AI pane is open. Use View, then AI sidebar.");
+    }
+    return pane.probe(options);
+  },
+
   /** Run the built-in checks and print the results to the error console. */
   async selfTest() {
     let { selfTest } = loadModule("src/selftest.mjs");

@@ -495,6 +495,15 @@ function createPaneApi(pane) {
       return { fit, setManualHeight };
     },
 
+    /** Describe the page, to help write selectors. See `Zotero.SideBrowser.probe`. */
+    async probe(options) {
+      let actor = await waitForActor();
+      if (!actor) {
+        throw new Error("The AI page is not ready");
+      }
+      return actor.sendQuery("probe", options || {});
+    },
+
     zoomBy: stepZoom,
     applyZoom,
   };

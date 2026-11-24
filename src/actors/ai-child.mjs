@@ -82,6 +82,8 @@ export class SideBrowserChild extends JSWindowActorChild {
         return this._compose(data);
       case "prepare":
         return this._prepare();
+      case "probe":
+        return this._probe(data);
       case "read-mock-state":
         return this._readMockState();
       case "click-send":
@@ -803,6 +805,135 @@ export class SideBrowserChild extends JSWindowActorChild {
     }
     let style = this.contentWindow.getComputedStyle(el);
     return style.visibility !== "hidden" && style.display !== "none";
+  }
+
+  // -------------------------------------------------------------------------
+  // Diagnostics
+  // -------------------------------------------------------------------------
+
+  /**
+   * Describe what the page offers, so a person can write selectors for a new
+   * site. It lists the message boxes, types a word into the first one so that the
+   * send button appears, lists the buttons around the box, and lists the file
+   * inputs. The word is removed again.
+   *
+   * @param {object} [options]
+   * @param {boolean} [options.type] - Set false to skip typing.
+   */
+  async _probe({ type = true } = {}) {
+    let doc = this.document;
+    let describe = (el) => ({
+      tag: el.localName,
+      id: el.id || "",
+      class: String(el.getAttribute("class") || "").slice(0, 90),
+      aria: el.getAttribute("aria-label") || "",
+      title: el.getAttribute("title") || "",
+      testid: el.getAttribute("data-testid") || "",
+      placeholder: el.getAttribute("placeholder") || "",
+      role: el.getAttribute("role") || "",
+      type: el.getAttribute("type") || "",
+      name: el.getAttribute("name") || "",
+      text: String(el.textContent || "").trim().slice(0, 30),
+      usable: this._isUsable(el),
+      selector: this._suggestSelector(el),
+    });
+
+    let boxes = Array.from(doc.querySelectorAll(
+      "textarea, [contenteditable='true'], [contenteditable=''], [role='textbox'], input[type='text'], input[type='search']",
+    )).filter((el) => this._isUsable(el));
+
+    let result = {
+      url: this.contentWindow.location.href,
+      title: doc.title,
+      composers: boxes.slice(0, 6).map(describe),
+      sendButtons: [],
+      fileInputs: [],
+    };
+
+    // Prefer the box the provider's own selectors find, so that the report also
+    // tells whether those selectors work.
+    let adapterBox = this._findComposer();
+    let box = adapterBox || boxes[0] || null;
+    result.adapter = {
+      composer: !!adapterBox,
+      send: false,
+      files: this._allFileInputs().length,
+    };
+    if (box && type) {
+      this._busy = true;
+      try {
+        this._insertText(box, "hello");
+        await this._delay(900);
+      } finally {
+        this._busy = false;
+      }
+    }
+
+    result.adapter.send = !!this._findSendButton(this._adapter?.sendSelectors || []);
+
+    if (box) {
+      // Buttons near the box: climb a few levels so the send button, which sits
+      // beside the box and not inside it, is included.
+      let scope = box;
+      for (let i = 0; i < 6 && scope.parentElement; i++) {
+        scope = scope.parentElement;
+      }
+      let seen = new Set();
+      for (let level = box; level && level !== doc.body; level = level.parentElement) {
+        for (let el of level.querySelectorAll("button, [role='button'], input[type='submit']")) {
+          if (!seen.has(el) && this._isUsable(el)) {
+            seen.add(el);
+            result.sendButtons.push(describe(el));
+          }
+        }
+        if (level === scope) {
+          break;
+        }
+      }
+      result.sendButtons = result.sendButtons.slice(0, 14);
+    }
+
+    result.fileInputs = Array.from(doc.querySelectorAll("input[type='file']")).map((el) => ({
+      ...describe(el),
+      accept: el.getAttribute("accept") || "",
+      multiple: el.hasAttribute("multiple"),
+    }));
+
+    if (box && type) {
+      this._busy = true;
+      try {
+        this._insertText(box, "");
+      } finally {
+        this._busy = false;
+      }
+    }
+    return result;
+  }
+
+  /** A selector that is short and likely to survive a site update. */
+  _suggestSelector(el) {
+    let tag = el.localName;
+    if (el.id && !/\d{3,}/.test(el.id)) {
+      return `#${CSS.escape(el.id)}`;
+    }
+    let testid = el.getAttribute("data-testid");
+    if (testid) {
+      return `${tag}[data-testid='${testid}']`;
+    }
+    let aria = el.getAttribute("aria-label");
+    if (aria) {
+      return `${tag}[aria-label='${aria}']`;
+    }
+    let name = el.getAttribute("name");
+    if (name) {
+      return `${tag}[name='${name}']`;
+    }
+    let placeholder = el.getAttribute("placeholder");
+    if (placeholder) {
+      return `${tag}[placeholder='${placeholder}']`;
+    }
+    let cls = Array.from(el.classList).find((c) => c.length > 3 && !/\d/.test(c) && !/^[a-z]{1,3}-/.test(c));
+    return cls ? `${tag}.${CSS.escape(cls)}` : tag;
   }
 
   // -------------------------------------------------------------------------

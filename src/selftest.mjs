@@ -40,6 +40,20 @@ export async function selfTest() {
   }
 
   let section = Zotero.SideBrowser.loadModule("src/section.mjs");
+
+  // Probe-only mode: visit the live services and stop. Used to measure a new
+  // service without waiting for the whole self test.
+  if (Zotero.Prefs.get("sidebrowser.testProbeOnly")) {
+    await Zotero.Promise.delay(2000);
+    let first = section.activePane();
+    if (first) {
+      let { testLiveProviders } = Zotero.SideBrowser.loadModule("src/selftest-live.mjs");
+      await testLiveProviders(record, first);
+    }
+    Zotero.debug("[Side Browser] PROBE DONE");
+    return results;
+  }
+
   record("section registered", !!section.getSectionKey(), { value: section.getSectionKey() });
   record("providers", section.getProviders().length >= 4, {
     value: section.getProviders().map((p) => p.id).join(","),
