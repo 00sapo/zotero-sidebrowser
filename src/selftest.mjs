@@ -601,6 +601,20 @@ function checkBadges(record, pane, section) {
   trigger.click();
   let list = pane.root.querySelector('[data-role="providerList"]');
   record("badges: the list opens", list.hidden === false);
+  let style = pane.doc.defaultView.getComputedStyle(list);
+  // `rgb(r, g, b)` has no alpha, and that is the point: the page must not show
+  // through the list. `rgba(..., a)` with a below one is transparent.
+  let opaque = (value) => {
+    let parts = String(value).match(/rgba?\(([^)]+)\)/);
+    if (!parts) {
+      return false;
+    }
+    let fields = parts[1].split(",").map((v) => v.trim());
+    return fields.length === 3 || Number(fields[3]) === 1;
+  };
+  record("badges: the list is opaque", opaque(style.backgroundColor) && style.opacity === "1", {
+    value: { background: style.backgroundColor, opacity: style.opacity, image: style.backgroundImage },
+  });
   let rows = Array.from(list.querySelectorAll(".sb-picker-row"));
   record("badges: one row for each service", rows.length === section.getProviders().length, { value: rows.length });
   let euriaRow = rows.find((row) => row.dataset.provider === "euria");

@@ -107,7 +107,11 @@ export const PaneCSS = `
   padding: 3px;
   border: 1px solid var(--fill-tertiary, rgba(0, 0, 0, 0.25));
   border-radius: 5px;
-  background: var(--material-menu, var(--material-background, #fff));
+  /* Opaque: Zotero's --material-menu is a translucent colour, and the page
+     behind would show through the list. */
+  background-color: var(--material-background, #fff);
+  background-image: none;
+  opacity: 1;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
 }
 
