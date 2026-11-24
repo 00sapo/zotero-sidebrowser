@@ -13,7 +13,7 @@
 <body>
 <h1>Mock chat</h1>
 <textarea id="composer" placeholder="Type a message"></textarea>
-<input id="files" type="file" accept="application/pdf" multiple hidden/>
+<input id="files" type="file" accept=".pdf,.md,.txt,text/*,application/pdf" multiple hidden/>
 <button id="send" type="button">Send</button>
 <div id="log">idle</div>
 
@@ -48,6 +48,7 @@
       })
     });
     composer.value = "";
+    document.getElementById("files").value = "";
     note("messages=" + received.length);
   });
 
