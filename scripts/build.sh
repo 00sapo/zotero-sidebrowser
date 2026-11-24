@@ -19,6 +19,7 @@ EXCLUDES=(
   -x "*.git*"
   -x "dist/*"
   -x "scripts/*"
+  -x "docs/*"
   -x "*.md"
   -x "*.xpi"
 )
