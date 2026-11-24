@@ -22,7 +22,6 @@ paying the Big Techs.
 
 - Euria
 - Ecosia AI
-- Mistral Le Chat
 
 ### Free services with privacy-respecting policies
 
@@ -37,10 +36,8 @@ paying the Big Techs.
 
 - ChatGPT
 - DeepSeek
-- Mistral Le Chat
 - Claude
 - Gemini
-- Perplexity
 
 ## Features
 
@@ -48,7 +45,7 @@ paying the Big Techs.
   account for, and the site's own limits apply.
 - One pane in Zotero's right column, with its own icon in the strip next to Info,
   Abstract, and Tags. It follows the light and dark theme.
-- Eleven services ready to use: ChatGPT, Claude, DeepSeek, Mistral Le Chat,
+- Ten services ready to use: ChatGPT, Claude, DeepSeek,
   Gemini, Euria, Ecosia AI, Lumo, Duck.ai, Brave Leo, and Venice, plus
   any other chat page through a custom URL.
 - Your papers go with your message. You type in the chat page as usual, and the

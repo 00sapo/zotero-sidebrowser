@@ -20,6 +20,7 @@ EXCLUDES=(
   -x "dist/*"
   -x "scripts/*"
   -x "docs/*"
+  -x ".planning/*"
   -x "*.md"
   -x "*.xpi"
 )

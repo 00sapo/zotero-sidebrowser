@@ -44,7 +44,6 @@
 const README_MARKS = {
   euria: ["eco", "privacy"],
   ecosia: ["eco", "privacy"],
-  mistral: ["eco"],
   lumo: ["privacy"],
   duckai: ["privacy"],
   brave: ["privacy"],
@@ -166,31 +165,6 @@ export const DEFAULT_PROVIDERS = [
       "div[role='button'][aria-disabled='false']",
     ],
     sendMode: "enter",
-    fileSelectors: [
-      "input[type='file'][accept*='pdf']",
-      "input[type='file'][multiple]",
-      "input[type='file']",
-    ],
-    acceptsDocuments: true,
-  },
-  {
-    id: "mistral",
-    label: "Mistral Le Chat",
-    url: "https://chat.mistral.ai/chat",
-    composerSelectors: [
-      "div.ProseMirror[contenteditable='true']",
-      "div[contenteditable='true']",
-      "textarea",
-    ],
-    attachSelectors: [
-      "button[aria-label*='Attach' i]",
-      "button[aria-label*='Upload' i]",
-    ],
-    sendSelectors: [
-      "button[type='submit']",
-      "button[aria-label*='Send']",
-    ],
-    sendMode: "button-then-enter",
     fileSelectors: [
       "input[type='file'][accept*='pdf']",
       "input[type='file'][multiple]",

@@ -626,7 +626,7 @@ function checkBadges(record, pane, section) {
     .filter((p) => !p.custom).every((p) => p.badges.includes("free")));
   record("badges: Euria is free, private, and eco", ["free", "privacy", "eco"]
     .every((mark) => marks("euria").includes(mark)), { value: marks("euria") });
-  record("badges: Mistral is free and eco", marks("mistral").join(",") === "free,eco", { value: marks("mistral") });
+  record("providers: Mistral is absent", !section.getProviders().some((p) => p.id === "mistral"));
   record("badges: Lumo is free and private", marks("lumo").join(",") === "free,privacy", { value: marks("lumo") });
   record("badges: ChatGPT is free only", marks("chatgpt").join(",") === "free", { value: marks("chatgpt") });
 

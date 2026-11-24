@@ -120,7 +120,7 @@ installed Zotero 10.0.8 (Gecko 140) or against a probe plugin run under Xvfb.
   by a button, not during the send.
 - Per-site selectors in the page, driven by a window actor.
 - The real PDF file is attached, not extracted text.
-- Default providers: ChatGPT, Claude, DeepSeek, Mistral, plus a custom URL.
+- Default providers come from `src/providers/registry.mjs`. Users can also set a custom URL.
 
 ## Verified end to end
 
