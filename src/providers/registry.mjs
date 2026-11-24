@@ -17,6 +17,24 @@
  *   acceptsDocuments   boolean   whether the composer accepts a non-image file
  */
 
+/**
+ * A provider with the generic selectors, for a site that has not been measured
+ * yet. Every field can be overridden.
+ *
+ * @param {object} fields
+ * @returns {object}
+ */
+function generic(fields) {
+  return {
+    composerSelectors: ["textarea", "div[contenteditable='true']", "[role='textbox']"],
+    sendSelectors: ["button[type='submit']", "button[aria-label*='Send' i]"],
+    sendMode: "button-then-enter",
+    fileSelectors: ["input[type='file'][accept*='pdf']", "input[type='file'][multiple]", "input[type='file']"],
+    acceptsDocuments: true,
+    ...fields,
+  };
+}
+
 export const DEFAULT_PROVIDERS = [
   {
     id: "chatgpt",
@@ -92,7 +110,7 @@ export const DEFAULT_PROVIDERS = [
   },
   {
     id: "mistral",
-    label: "Mistral",
+    label: "Mistral Le Chat",
     url: "https://chat.mistral.ai/chat",
     composerSelectors: [
       "div.ProseMirror[contenteditable='true']",
@@ -111,6 +129,88 @@ export const DEFAULT_PROVIDERS = [
     ],
     acceptsDocuments: true,
   },
+  // The five services below were measured on their live pages, signed out. The
+  // selectors come from `Zotero.SideBrowser.probe()` output.
+  generic({
+    id: "gemini",
+    label: "Gemini",
+    url: "https://gemini.google.com/app",
+    composerSelectors: [
+      "div.ql-editor[role='textbox']",
+      "rich-textarea div[contenteditable='true']",
+      "div[contenteditable='true'][aria-label*='prompt' i]",
+    ],
+    sendSelectors: ["button[aria-label='Send message']", "button.send-button"],
+    // Gemini creates its file input only when the upload menu opens, so files
+    // arrive by paste.
+    notes: "Files are pasted into the message box.",
+  }),
+  generic({
+    id: "perplexity",
+    label: "Perplexity",
+    url: "https://www.perplexity.ai/",
+    composerSelectors: [
+      "div[role='textbox'][contenteditable='true']",
+      "#ask-input",
+      "div[contenteditable='true'][aria-label^='Ask']",
+    ],
+    sendSelectors: ["button[aria-label='Submit']", "button[type='submit']"],
+  }),
+  generic({
+    id: "euria",
+    label: "Euria",
+    url: "https://euria.infomaniak.com/",
+    composerSelectors: ["textarea[aria-label='Ask Euria']", "textarea"],
+    sendSelectors: ["button[aria-label='Send']", "button[type='submit']"],
+    notes: "Signed out, the page takes only images, so text goes as a PDF.",
+  }),
+  generic({
+    id: "ecosia",
+    label: "Ecosia AI",
+    url: "https://www.ecosia.org/ai-chat",
+    composerSelectors: ["textarea[name='prompt']", "textarea.input-field__prompt-textarea", "textarea"],
+    sendSelectors: ["button.input-field__prompt-button", "button[aria-label='Send']"],
+    fileSelectors: ["input[name='file-attachment']", "input[type='file']"],
+  }),
+  generic({
+    id: "lumo",
+    label: "Lumo",
+    url: "https://lumo.proton.me/",
+    composerSelectors: [
+      "textarea.composer",
+      ".ProseMirror.composer",
+      "textarea[placeholder^='Ask']",
+      "div[contenteditable='true']",
+    ],
+    sendSelectors: ["button.button-solid-norm.rounded-full", "button[type='submit']"],
+    fileSelectors: ["#emptyFileCardInput", "input[type='file']"],
+  }),
+  generic({
+    id: "duckai",
+    label: "Duck.ai",
+    url: "https://duck.ai/",
+    composerSelectors: ["textarea[name='user-prompt']", "textarea[placeholder^='Ask']", "textarea"],
+    sendSelectors: ["button[type='submit']", "button[aria-label='Ask']"],
+    fileSelectors: ["input[name='upload']", "input[type='file']"],
+    notes: "The page takes PDFs and images only, so text goes as a PDF.",
+  }),
+  generic({
+    id: "brave",
+    label: "Brave Leo",
+    url: "https://search.brave.com/ask",
+    composerSelectors: ["#tap-input-field", "textarea[placeholder^='Ask']"],
+    sendSelectors: ["button.tap-input-primary-button", "button[aria-label='Ask']"],
+    fileSelectors: ["input.tap-image-input", "input[type='file']"],
+    notes: "The page takes images only. Use Insert context to edit for papers.",
+  }),
+  generic({
+    id: "venice",
+    label: "Venice",
+    url: "https://venice.ai/chat",
+    composerSelectors: ["textarea[name='prompt-textarea']", "textarea[aria-label='Chat message input']", "textarea"],
+    sendSelectors: ["button[data-testid='minds-chat-send-button']", "button[aria-label='Send message']"],
+    fileSelectors: ["input[data-testid='minds-chat-file-input']", "input[type='file']"],
+  }),
 ];
 
 /**
