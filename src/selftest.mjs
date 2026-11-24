@@ -239,7 +239,50 @@ async function runSendTest(api, testURL, record) {
   record("send: the metadata file arrives", names.includes("paper-metadata.md"), { value: names });
   record("send: the PDF file arrives", names.some((name) => name.endsWith(".pdf")), { value: names });
 
-  // A second message in the same conversation carries no files.
+  // A page that takes pictures only gets the metadata as a picture.
+  api.navigate(`${testURL}?images=1`);
+  await waitForPane(api, `${testURL}?images=1`);
+  await Zotero.Promise.delay(1200);
+  await api.sync();
+  pane.options.metadata = true;
+  pane.options.pdf = false;
+  pane.editedText = null;
+  api.render();
+  await api.syncPackage();
+  await typeInPage(pane, "A page that takes pictures.");
+  await clickSend(pane);
+  // A new page counts from zero, so this is its first message.
+  let images = await waitForMessages(pane, 1);
+  let imageFiles = (images?.received?.[0] || {}).files || [];
+  record("images: the metadata travels as a picture", imageFiles.length === 1
+    && imageFiles[0].type === "image/png" && imageFiles[0].size > 800, { value: imageFiles });
+
+  // A page that takes PDFs only gets the picture as a PDF.
+  api.navigate(`${testURL}?pdfonly=1`);
+  await waitForPane(api, `${testURL}?pdfonly=1`);
+  await Zotero.Promise.delay(1200);
+  await api.sync();
+  await api.syncPackage();
+  await typeInPage(pane, "A page that takes documents.");
+  await clickSend(pane);
+  let pdfs = await waitForMessages(pane, 1);
+  let pdfOnly = (pdfs?.received?.[0] || {}).files || [];
+  record("pdf only: the text travels as a PDF", pdfOnly.length === 1
+    && pdfOnly[0].type === "application/pdf" && pdfOnly[0].size > 300, { value: pdfOnly });
+
+  // Back to the plain page, and send twice: the files go with the first message
+  // only.
+  api.navigate(testURL);
+  await waitForPane(api, testURL);
+  await Zotero.Promise.delay(1200);
+  await api.sync();
+  await api.syncPackage();
+  await typeInPage(pane, "One more question.");
+  await clickSend(pane);
+  let again = await waitForMessages(pane, 1);
+  record("send: the files go again for a new page", ((again?.received?.[0] || {}).files || []).length > 0, {
+    value: (again?.received?.[0] || {}).files,
+  });
   await typeInPage(pane, "And another question.");
   await clickSend(pane);
   let second = await waitForMessages(pane, 2);
@@ -443,9 +486,9 @@ async function checkPackage(record, pane) {
   record("package: text files are text", built.files
     .filter((f) => f.name.endsWith(".md"))
     .every((f) => typeof f.text === "string" && f.type === "text/markdown"));
-  record("package: text files know they can be a PDF", built.files
+  record("package: text files can change shape", built.files
     .filter((f) => f.name.endsWith(".md"))
-    .every((f) => f.twinPDF === true));
+    .every((f) => f.fromText === true));
   record("package: PDF is binary", built.files
     .filter((f) => f.name.endsWith(".pdf"))
     .every((f) => typeof f.data === "string" && f.data.length > 100));

@@ -43,6 +43,8 @@
   window.__received = [];
   window.__attached = attached;
   window.__dropped = [];
+  // A real page keeps what it has already attached, and forgets it on leave.
+
 
   document.getElementById("attach").addEventListener("click", function () {
     if (slot.querySelector("input")) {
@@ -54,9 +56,9 @@
     element.type = "file";
     element.multiple = true;
     element.hidden = true;
-    element.setAttribute("accept", /pdfonly=1/.test(location.search)
-      ? ".pdf,application/pdf"
-      : (/nofile=1/.test(location.search) ? "image/*" : ""));
+    element.setAttribute("accept", /images=1/.test(location.search)
+      ? "image/png,image/jpeg,image/webp"
+      : (/pdfonly=1/.test(location.search) ? ".pdf,application/pdf" : ""));
     element.addEventListener("change", function () {
       // The page copies the files out of its own input on every change.
       note("change with " + element.files.length + " file(s)");
