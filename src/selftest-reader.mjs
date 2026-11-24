@@ -50,13 +50,13 @@ export async function testReaderFlow(record, section) {
   record("selection stored", pane.selection?.text?.length > 0, {
     value: pane.selection?.text?.slice(0, 40),
   });
-  let label = pane.root.querySelector('[data-option="pdfText"]');
+  let label = pane.root.querySelector('[data-kind="selection"]');
+  await api.refreshScope();
   record("selection option shown", !!label && !label.hidden);
 
-  await api.refreshScope();
-  let composed = api.compose();
-  record("selection in prompt", composed.text.includes(annotation.text.slice(0, 20)), {
-    value: { chars: composed.text.length },
+  let text = await api.contextText();
+  record("selection in context text", text.includes(annotation.text.slice(0, 20)), {
+    value: { chars: text.length },
   });
 
   step("done");
